@@ -3025,6 +3025,45 @@ html.is-windows .settings-panel select option {
   padding-right: 2px;
   scrollbar-width: none;
 }
+.model-breakdown-mode-host {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 0;
+  overflow: hidden;
+  border: 1px solid rgba(var(--line-rgb), 0.18);
+  border-radius: 7px;
+  background: rgba(var(--overlay-rgb), var(--control-alpha));
+}
+.model-breakdown-mode-option {
+  min-width: 0;
+  padding: 4px 10px;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font: inherit;
+  font-size: 11px;
+  line-height: 1.2;
+  transition: color 120ms ease, background 120ms ease;
+}
+.model-breakdown-mode-option + .model-breakdown-mode-option {
+  border-left: 1px solid rgba(var(--line-rgb), 0.14);
+}
+.model-breakdown-mode-option:hover {
+  color: var(--text);
+  background: rgba(var(--overlay-rgb), 0.04);
+}
+.model-breakdown-mode-option.is-active {
+  color: var(--text);
+  background: rgba(var(--accent-rgb), 0.11);
+}
+.model-breakdown-mode-option:focus-visible {
+  position: relative;
+  z-index: 1;
+  outline: 2px solid rgba(var(--accent-rgb), 0.32);
+  outline-offset: -2px;
+}
+.shell.settings-open .model-breakdown-mode-host { display: none; }
 .breakdown::-webkit-scrollbar { width: 0; height: 0; }
 .breakdown-incomplete-hint {
   margin: 0;

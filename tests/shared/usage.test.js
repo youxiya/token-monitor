@@ -5,6 +5,7 @@ const test = require('node:test');
 
 const {
   aggregateDevices,
+  applyPeriodDelta,
   extractUsageBundleFromTokscale,
   extractUsageFromTokscale,
   mergeDeviceRecord,
@@ -1668,4 +1669,65 @@ test('aggregateDevices folds a pre-rename micode device into the mimo row', () =
   assert.equal(aggregate.periods.today.clients.mimo, 140);
   assert.equal(aggregate.periods.today.clients.micode, undefined);
   assert.equal(aggregate.periods.today.clientCosts.mimo, 2);
+});
+
+test('tokscale rows with a provider build a per-route model split that mirrors the merged totals', () => {
+  const period = extractUsageFromTokscale({ entries: [
+    { client: 'dsh', session: 'a', model: 'deepseek-v4.1-flash', provider: 'router', input: 100, output: 20 },
+    { client: 'dsh', session: 'b', model: 'deepseek-v4.1-flash', provider: 'kala', input: 50, output: 10 },
+    { client: 'dsh', session: 'c', model: 'glm-5.2', provider: 'codearts', input: 10, output: 5 },
+    { client: 'dsh', session: 'd', model: 'no-provider', input: 7, output: 1 }
+  ] });
+
+  assert.deepEqual(period.models, { 'deepseek-v4.1-flash': 180, 'glm-5.2': 15, 'no-provider': 8 });
+  assert.deepEqual(period.modelProviders['deepseek-v4.1-flash'].router, {
+    tokens: 120, costUsd: 0, cacheReadTokens: 0, cacheWriteTokens: 0, outputTokens: 20
+  });
+  assert.deepEqual(period.modelProviders['deepseek-v4.1-flash'].kala, {
+    tokens: 60, costUsd: 0, cacheReadTokens: 0, cacheWriteTokens: 0, outputTokens: 10
+  });
+  assert.equal(period.modelProviders['no-provider'], undefined);
+});
+
+test('modelProviders survives normalizePeriod, merges through mergePeriods and deltas exactly', () => {
+  const split = { 'deepseek-v4.1-flash': { router: {
+    tokens: 120, costUsd: 0.5, cacheReadTokens: 30, cacheWriteTokens: 2, outputTokens: 20
+  }, kala: {
+    tokens: 60, costUsd: 0.2, cacheReadTokens: 10, cacheWriteTokens: 1, outputTokens: 10
+  } } };
+  const base = normalizePeriod({ totalTokens: 180, models: { 'deepseek-v4.1-flash': 180 }, modelProviders: split });
+  const incoming = normalizePeriod({
+    totalTokens: 40,
+    models: { 'deepseek-v4.1-flash': 40 },
+    modelProviders: { 'deepseek-v4.1-flash': { router: {
+      tokens: 40, costUsd: 0.1, cacheReadTokens: 8, cacheWriteTokens: 0, outputTokens: 6
+    } } }
+  });
+  const merged = mergePeriods(base, incoming);
+  assert.equal(merged.modelProviders['deepseek-v4.1-flash'].router.tokens, 160);
+  assert.equal(merged.modelProviders['deepseek-v4.1-flash'].kala.tokens, 60);
+  assert.equal(merged.models['deepseek-v4.1-flash'], 220);
+
+  const anchored = { ...base };
+  const delta = applyPeriodDelta(merged, incoming, anchored);
+  assert.equal(delta.modelProviders['deepseek-v4.1-flash'].router.tokens, 80);
+  assert.equal(delta.modelProviders['deepseek-v4.1-flash'].kala.tokens, 0);
+});
+
+test('normalizeDeviceRecord keeps the routing split across the hub wire shape', () => {
+  const record = normalizeDeviceRecord({
+    deviceId: 'desk',
+    periods: {
+      today: { totalTokens: 10, models: { m: 10 }, modelProviders: { m: { router: {
+        tokens: 10, costUsd: 0, cacheReadTokens: 0, cacheWriteTokens: 0, outputTokens: 2
+      } } } },
+      allTime: { totalTokens: 20, models: { m: 20 }, model_providers: { m: { kala: {
+        tokens: 20, costUsd: 0, cacheReadTokens: 0, cacheWriteTokens: 0, outputTokens: 4
+      } } } }
+    }
+  });
+  assert.deepEqual(record.periods.today.modelProviders.m.router, {
+    tokens: 10, costUsd: 0, cacheReadTokens: 0, cacheWriteTokens: 0, outputTokens: 2
+  });
+  assert.equal(record.periods.allTime.modelProviders.m.kala.tokens, 20);
 });
