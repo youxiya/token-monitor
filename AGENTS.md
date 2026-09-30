@@ -22,6 +22,7 @@ To dry-run the agent without posting: `npm run agent:once -- --dry-run`.
 
 | Changing… | Read first |
 |---|---|
+| anything — locate the owning file/function before reading code | `docs/PROJECT_MAP.zh-CN.md`（全项目功能→文件地图：子系统区块图、IPC 速查、修改任务速查、雷区） |
 | a boundary shared by the widget, agent, Hub or Worker; the collector, limits runtime, credentials or wire record | `docs/architecture.md` |
 | anything under `src/shared/providers/<id>/` or `src/electron/providers/<id>/` | `docs/providers/README.md`, then the note whose `ids:` front matter lists that id if one exists — `grep -lE '^ids:.*[[, ]<id>[],]' docs/providers/*.md`. Most providers have no note; the README and the code/tests are then authoritative |
 | adding or renaming a tracked client or limits provider | `docs/providers/README.md` (both registration checklists) |
