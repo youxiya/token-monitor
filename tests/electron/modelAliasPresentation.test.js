@@ -244,3 +244,28 @@ test('an alias that matches nothing in the payload copies no part of the stats t
   assert.deepEqual(projected.modelAliasSourceIds, ['gpt-5.5-pro']);
   assert.ok(projected.historyRevision.startsWith('raw:aliases:'));
 });
+
+test('modelProviders folds under alias groups while keeping the provider dimension', () => {
+  const stats = { periods: { today: {
+    totalTokens: 90,
+    models: { 'anthropic/claude-opus-5': 40, 'claude-opus-5': 20, other: 30 },
+    modelProviders: {
+      'anthropic/claude-opus-5': { router: { tokens: 40, costUsd: 0.4, cacheReadTokens: 4, cacheWriteTokens: 0, outputTokens: 8 } },
+      'claude-opus-5': { kala: { tokens: 20, costUsd: 0.2, cacheReadTokens: 2, cacheWriteTokens: 1, outputTokens: 4 } },
+      other: { router: { tokens: 30, costUsd: 0, cacheReadTokens: 0, cacheWriteTokens: 0, outputTokens: 0 } }
+    }
+  } } };
+  const projected = projectModelAliasStats(stats, aliases, { grouping: 'off' });
+  const providers = projected.periods.today.modelProviders;
+  assert.deepEqual(providers['claude-opus-5'].router, {
+    tokens: 40, costUsd: 0.4, cacheReadTokens: 4, cacheWriteTokens: 0, outputTokens: 8
+  });
+  assert.deepEqual(providers['claude-opus-5'].kala, {
+    tokens: 20, costUsd: 0.2, cacheReadTokens: 2, cacheWriteTokens: 1, outputTokens: 4
+  });
+  assert.equal(providers['anthropic/claude-opus-5'], undefined);
+  assert.deepEqual(providers.other.router, {
+    tokens: 30, costUsd: 0, cacheReadTokens: 0, cacheWriteTokens: 0, outputTokens: 0
+  });
+  assert.equal(projected.periods.today.models['claude-opus-5'], 60);
+});

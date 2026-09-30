@@ -1568,6 +1568,11 @@
       <section id="fixedPeriodMessage" class="fixed-period-message hidden" role="status" aria-live="polite"></section>
 
       <section id="homePanel" class="home-panel hidden"></section>
+      <div id="modelBreakdownModeHost" class="model-breakdown-mode-host hidden" role="group" aria-label="Model breakdown mode" data-i18n-aria-label="views.modelBreakdownMode">
+        <button id="modelBreakdownModeMixed" type="button" class="model-breakdown-mode-option" data-mode="mixed" data-i18n="views.modelBreakdown.mixed">Provider / Model</button>
+        <button id="modelBreakdownModeModel" type="button" class="model-breakdown-mode-option" data-mode="model" data-i18n="views.modelBreakdown.model">By Model</button>
+        <button id="modelBreakdownModeProvider" type="button" class="model-breakdown-mode-option" data-mode="provider" data-i18n="views.modelBreakdown.provider">By Provider</button>
+      </div>
       <section id="breakdown" class="breakdown"></section>
       <div id="session-detail-head" class="detail-head hidden"></div>
       <div id="session-detail" class="session-detail hidden"></div>
@@ -1698,6 +1703,7 @@
     <script src="syncDevicePanel.js"></script>
     <script src="selectControl.js"></script>
     <script src="usageAttributionRows.js"></script>
+    <script src="modelBreakdownRows.js"></script>
     <script src="toolDetails.js"></script>
     <script src="../../shared/projectKey.js"></script>
     <script src="projectRows.js"></script>

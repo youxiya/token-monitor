@@ -579,6 +579,7 @@ function defaultSettings() {
     tokenRateMode: 'speed',
     heatmapMetric: 'cost',
     modelRankingMetric: 'tokens',
+    modelBreakdownMode: 'mixed',
     homeActiveDaysWindow: 'all',
     // How a live session's context gauge reads. That direction is a choice the
     // gauge cannot make on its own, so it is stated here rather than assumed:
@@ -730,6 +731,12 @@ function normalizeHeatmapMetric(value, fallback = 'cost') {
   const next = String(value || '').trim();
   if (next === 'tokens' || next === 'cost') return next;
   return fallback === 'tokens' ? 'tokens' : 'cost';
+}
+
+function normalizeModelBreakdownMode(value, fallback = 'mixed') {
+  const next = String(value || '').trim();
+  if (next === 'mixed' || next === 'model' || next === 'provider') return next;
+  return fallback === 'model' || fallback === 'provider' ? fallback : 'mixed';
 }
 
 function normalizeHomeActiveDaysWindow(value, fallback = 'all') {
@@ -2557,6 +2564,7 @@ function readSettings() {
     merged.syncUploadIntervalMs = normalizeSyncUploadIntervalMs(merged.syncUploadIntervalMs);
     merged.heatmapMetric = normalizeHeatmapMetric(merged.heatmapMetric);
     merged.modelRankingMetric = normalizeRankingMetric(merged.modelRankingMetric);
+    merged.modelBreakdownMode = normalizeModelBreakdownMode(merged.modelBreakdownMode);
     merged.homeActiveDaysWindow = normalizeHomeActiveDaysWindow(merged.homeActiveDaysWindow);
     merged.sessionTitlesEnabled = parseBoolean(merged.sessionTitlesEnabled, true);
     merged.sessionContextMetric = normalizeSessionContextMetric(merged.sessionContextMetric);
@@ -7589,6 +7597,7 @@ app.whenReady().then(() => {
       periodMonthMode: normalizePeriodMonthMode(patch.periodMonthMode ?? settings.periodMonthMode),
       modelRankingMetric: normalizeRankingMetric(patch.modelRankingMetric ?? settings.modelRankingMetric),
       sessionTitlesEnabled: parseBoolean(patch.sessionTitlesEnabled ?? settings.sessionTitlesEnabled, true),
+      modelBreakdownMode: normalizeModelBreakdownMode(patch.modelBreakdownMode ?? settings.modelBreakdownMode),
       sessionContextMetric: normalizeSessionContextMetric(patch.sessionContextMetric ?? settings.sessionContextMetric),
       historyEnabled: parseBoolean(patch.historyEnabled ?? settings.historyEnabled, false),
       projectsEnabled: parseBoolean(patch.projectsEnabled ?? settings.projectsEnabled, true),

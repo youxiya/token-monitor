@@ -222,6 +222,16 @@ function emptyPeriod() {
     modelUnclassifiedTokens: {},
     clientModels: {},
     clientModelCosts: {},
+    // Routing split for the models view: `model -> provider -> metrics`. tokscale
+    // rows carry the provider a client routed the call to (dsh gateways, opencode
+    // profiles, ...) beside the served model, and without this map the model
+    // breakdown merges every route of one served model into a single row. Metrics
+    // mirror the model-level maps (tokens/cost/cache/output) so a split row needs
+    // no derivation. Producers that cannot attribute a row's provider simply omit
+    // the entry — consumers must treat a missing map as "merged only" and must
+    // never rebuild totals from it, because archived sessions and older agents
+    // contribute to `models` without a provider split.
+    modelProviders: {},
     projects: Object.create(null),
     sessions: {}
   };
@@ -803,6 +813,26 @@ function reconcileCursorAutoGlobalModels(period, input) {
     period.models[raw] = available - moved;
     if (period.models[raw] === 0) delete period.models[raw];
     period.models['cursor-auto'] = (period.models['cursor-auto'] || 0) + moved;
+    // Keep the routing split keyed the way `models` is keyed, or the mixed
+    // model rows would read a provider split under a model the period no
+    // longer reports. A partial move cannot split the per-provider metrics
+    // without inventing a distribution, so the split falls back to merged.
+    const rawProviders = period.modelProviders?.[raw];
+    if (rawProviders) {
+      if (exclusive) {
+        const target = period.modelProviders['cursor-auto'] || (period.modelProviders['cursor-auto'] = {});
+        for (const [provider, metrics] of Object.entries(rawProviders)) {
+          const entry = target[provider]
+            || (target[provider] = { tokens: 0, costUsd: 0, cacheReadTokens: 0, cacheWriteTokens: 0, outputTokens: 0 });
+          entry.tokens += metrics.tokens;
+          entry.costUsd += metrics.costUsd;
+          entry.cacheReadTokens += metrics.cacheReadTokens;
+          entry.cacheWriteTokens += metrics.cacheWriteTokens;
+          entry.outputTokens += metrics.outputTokens;
+        }
+      }
+      delete period.modelProviders[raw];
+    }
     if (exclusive) {
       for (const key of [
         'modelCacheReads',
@@ -990,6 +1020,31 @@ function normalizePeriod(input, options = {}) {
       }
     }
   }
+  const rawModelProviders = input.modelProviders ?? input.model_providers;
+  if (rawModelProviders && typeof rawModelProviders === 'object') {
+    for (const [model, providers] of Object.entries(rawModelProviders)) {
+      const modelKey = normalizeModelName(model);
+      if (!modelKey || !providers || typeof providers !== 'object') continue;
+      for (const [provider, metrics] of Object.entries(providers)) {
+        const providerKey = normalizeProviderName(provider);
+        if (!providerKey || !metrics || typeof metrics !== 'object') continue;
+        if (!period.modelProviders[modelKey]) period.modelProviders[modelKey] = {};
+        const entry = period.modelProviders[modelKey][providerKey]
+          || (period.modelProviders[modelKey][providerKey] = {
+            tokens: 0,
+            costUsd: 0,
+            cacheReadTokens: 0,
+            cacheWriteTokens: 0,
+            outputTokens: 0
+          });
+        entry.tokens += Math.max(0, Math.round(asNumber(metrics.tokens ?? metrics.totalTokens)));
+        entry.costUsd += asNumber(metrics.costUsd ?? metrics.cost);
+        entry.cacheReadTokens += Math.max(0, Math.round(asNumber(metrics.cacheReadTokens)));
+        entry.cacheWriteTokens += Math.max(0, Math.round(asNumber(metrics.cacheWriteTokens)));
+        entry.outputTokens += Math.max(0, Math.round(asNumber(metrics.outputTokens)));
+      }
+    }
+  }
   reconcileCursorAutoGlobalModels(period, input);
   if (input.sessions && typeof input.sessions === 'object') {
     for (const [key, value] of Object.entries(input.sessions)) {
@@ -1113,6 +1168,25 @@ function addUsageRowToPeriod(period, row, detectedClient = detectClient(row)) {
   if (client && model && cost > 0) {
     if (!period.clientModelCosts[client]) period.clientModelCosts[client] = {};
     period.clientModelCosts[client][model] = (period.clientModelCosts[client][model] || 0) + cost;
+  }
+  if (model && tokens > 0) {
+    const provider = normalizeProviderName(row.provider);
+    if (provider) {
+      if (!period.modelProviders[model]) period.modelProviders[model] = {};
+      const entry = period.modelProviders[model][provider]
+        || (period.modelProviders[model][provider] = {
+          tokens: 0,
+          costUsd: 0,
+          cacheReadTokens: 0,
+          cacheWriteTokens: 0,
+          outputTokens: 0
+        });
+      entry.tokens += Math.round(tokens);
+      entry.costUsd += cost;
+      entry.cacheReadTokens += cacheRead;
+      entry.cacheWriteTokens += cacheWrite;
+      entry.outputTokens += output;
+    }
   }
   const session = sessionFromRow(row);
   if (session) addSession(period, session);
@@ -1679,6 +1753,24 @@ function addPeriodInto(target, source) {
     if (!target.clientModelCosts[client]) target.clientModelCosts[client] = {};
     for (const [model, cost] of Object.entries(models)) {
       target.clientModelCosts[client][model] = (target.clientModelCosts[client][model] || 0) + cost;
+    }
+  }
+  for (const [model, providers] of Object.entries(source.modelProviders || {})) {
+    if (!target.modelProviders[model]) target.modelProviders[model] = {};
+    for (const [provider, metrics] of Object.entries(providers)) {
+      const entry = target.modelProviders[model][provider]
+        || (target.modelProviders[model][provider] = {
+          tokens: 0,
+          costUsd: 0,
+          cacheReadTokens: 0,
+          cacheWriteTokens: 0,
+          outputTokens: 0
+        });
+      entry.tokens += metrics.tokens;
+      entry.costUsd += metrics.costUsd;
+      entry.cacheReadTokens += metrics.cacheReadTokens;
+      entry.cacheWriteTokens += metrics.cacheWriteTokens;
+      entry.outputTokens += metrics.outputTokens;
     }
   }
   for (const [key, project] of Object.entries(source.projects || {})) addProjectInto(target.projects, key, project);
