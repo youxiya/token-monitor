@@ -147,6 +147,40 @@ function foldModelThroughput(value, resolve) {
   return Object.fromEntries(result);
 }
 
+// `modelProviders` nests the model-level metrics one level deeper (provider ->
+// metrics), so folding an alias group has to merge whole metric entries rather
+// than single numbers. Only models whose alias actually moves are rewritten;
+// untouched submaps keep their reference so the projection stays cheap.
+function foldModelProviderMap(map, resolve) {
+  if (!map || typeof map !== 'object') return map;
+  const keys = Object.keys(map);
+  if (!keys.some((model) => resolve(model) !== model)) return map;
+  const result = new Map();
+  for (const model of keys) {
+    const key = resolve(model);
+    const providers = map[model];
+    if (!providers || typeof providers !== 'object') continue;
+    const target = result.get(key);
+    if (!target) {
+      result.set(key, providers);
+      continue;
+    }
+    for (const [provider, metrics] of Object.entries(providers)) {
+      const entry = target[provider];
+      if (!entry) {
+        target[provider] = metrics;
+        continue;
+      }
+      for (const metric of Object.keys(entry)) {
+        if (typeof entry[metric] === 'number' && typeof metrics[metric] === 'number') {
+          entry[metric] += metrics[metric];
+        }
+      }
+    }
+  }
+  return Object.fromEntries(result);
+}
+
 function projectNestedUsage(map, resolve) {
   return mapValues(map, (row) => projectUsage(row, resolve));
 }
@@ -160,6 +194,7 @@ const USAGE_PROJECTIONS = [
   ['clientModels', foldClientModelMaps],
   ['clientModelCosts', foldClientModelMaps],
   ['clientModelUnpricedTokens', foldClientModelMaps],
+  ['modelProviders', foldModelProviderMap],
   ['sessions', projectNestedUsage],
   ['projects', projectNestedUsage]
 ];
