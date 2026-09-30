@@ -151,7 +151,17 @@ test('symlinked packaged Widget artifacts never launch or create marker state', 
         : process.platform === 'win32'
           ? 'junction'
           : 'dir';
-      fs.symlinkSync(realTarget, target, linkType);
+      try {
+        fs.symlinkSync(realTarget, target, linkType);
+      } catch (error) {
+        if (process.platform === 'win32' && error.code === 'EPERM') {
+          // A Windows process without symlink privilege cannot link a file
+          // (junctions cover the directories above). The helper case still
+          // runs on macOS and on privileged Windows runners.
+          continue;
+        }
+        throw error;
+      }
       let launches = 0;
       const recover = createMacWidgetLaunchServicesRecovery({
         execFile: () => { launches += 1; }
