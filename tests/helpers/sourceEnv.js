@@ -17,6 +17,12 @@ const SOURCE_ENV_KEYS = Object.freeze([
   // be cleared like the rest of this list.
   'HOME',
   'USERPROFILE',
+  // Windows base-directory variables: clientSources reads APPDATA and
+  // LOCALAPPDATA directly for the Copilot/Zed/CodeBuddy/Kiro roots, so a
+  // machine with real VS Code chat sessions under its own %APPDATA% fails the
+  // presence tests exactly like an exported $HOME would.
+  'APPDATA',
+  'LOCALAPPDATA',
   'XDG_DATA_HOME',
   'COPILOT_OTEL_FILE_EXPORTER_PATH',
   'CODEX_HOME',
