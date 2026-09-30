@@ -173,7 +173,9 @@ test('the built-in extension dir overlap is canonicalized, not string-matched', 
     const extensionDir = path.join(tmp, '.gemini', 'antigravity', 'conversations');
     fs.mkdirSync(extensionDir, { recursive: true });
     const link = path.join(tmp, 'ag-conversations-link');
-    fs.symlinkSync(extensionDir, link);
+    // A junction needs no symlink privilege, which a plain Windows directory
+    // link does; the canonicalization under test resolves both identically.
+    fs.symlinkSync(extensionDir, link, process.platform === 'win32' ? 'junction' : 'dir');
     const options = { platform: process.platform, home: tmp };
     assert.equal(
       tokscaleExtraDirsEnv({ antigravity: [link] }, '', options),
