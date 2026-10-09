@@ -18,6 +18,9 @@ const test = require('node:test');
 
 const { collectUsageOnce } = require('../../src/shared/collector');
 const { localDayKey } = require('../../src/shared/history');
+const { installSourceEnvGuard } = require('../helpers/sourceEnv');
+
+installSourceEnvGuard(test);
 
 const KEY = 'dsh:session-prop';
 

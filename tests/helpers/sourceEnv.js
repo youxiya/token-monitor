@@ -34,7 +34,12 @@ const SOURCE_ENV_KEYS = Object.freeze([
   'KIMI_CODE_HOME',
   'GEMINI_CLI_HOME',
   'HERMES_HOME',
-  'UNSLOTH_STUDIO_HOME'
+  'UNSLOTH_STUDIO_HOME',
+  // DSH resolves its home from DSH_HOME before ~/.dsh, so a developer who
+  // relocates it (or exports it once) sends every fixture lookup back to the
+  // real session tree. The fixture then reads as a session with no transcript,
+  // which is a silent miss rather than an error.
+  'DSH_HOME'
 ]);
 
 // Applied to a whole file rather than case by case, so a test added later is
