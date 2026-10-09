@@ -306,7 +306,12 @@ function normalizeSessionId(value) {
 }
 
 function normalizeProviderName(value) {
-  const raw = String(value || '').trim().toLowerCase();
+  // This runs once per row of every scan from addUsageRowToPeriod, and almost no
+  // client reports a route, so the absent case returns before the substitution
+  // instead of running it over an empty string. Falsy non-strings keep the old
+  // `value || ''` reading, so a `0` or `false` provider is still no provider.
+  if (typeof value !== 'string' && !value) return null;
+  const raw = String(value).trim().toLowerCase();
   return raw.replace(/[^a-z0-9_-]+/g, '-') || null;
 }
 

@@ -1775,6 +1775,23 @@ test('tokscale rows with a provider build a per-route model split that mirrors t
   assert.equal(period.modelProviders['no-provider'], undefined);
 });
 
+test('a row provider is normalized the same way whether or not it is a string', () => {
+  const period = extractUsageFromTokscale({ entries: [
+    { client: 'dsh', session: 'a', model: 'm', provider: '  Router 9 ', input: 10, output: 2 },
+    { client: 'dsh', session: 'b', model: 'm', provider: 'weird/provider name', input: 5, output: 1 },
+    { client: 'dsh', session: 'c', model: 'm', provider: '', input: 5, output: 1 },
+    { client: 'dsh', session: 'd', model: 'm', provider: '   ', input: 5, output: 1 },
+    { client: 'dsh', session: 'e', model: 'm', provider: null, input: 5, output: 1 },
+    { client: 'dsh', session: 'f', model: 'm', input: 5, output: 1 }
+  ] });
+
+  assert.deepEqual(Object.keys(period.modelProviders.m).sort(), ['router-9', 'weird-provider-name']);
+  assert.equal(period.modelProviders.m['router-9'].tokens, 12);
+  assert.equal(period.modelProviders.m['weird-provider-name'].tokens, 6);
+  // Only the routed rows are attributed; the rest still count towards the model.
+  assert.equal(period.models.m, 42);
+});
+
 test('modelProviders survives normalizePeriod, merges through mergePeriods and deltas exactly', () => {
   const split = { 'deepseek-v4.1-flash': { router: {
     tokens: 120, costUsd: 0.5, cacheReadTokens: 30, cacheWriteTokens: 2, outputTokens: 20
