@@ -151,24 +151,27 @@ function foldModelThroughput(value, resolve) {
 // metrics), so folding an alias group has to merge whole metric entries rather
 // than single numbers. Only models whose alias actually moves are rewritten;
 // untouched submaps keep their reference so the projection stays cheap.
+//
+// The merged entries are copies. Every other projection in this file either
+// builds a fresh container or hands back the input untouched, and that is a
+// contract rather than a style choice: the value projected here is the published
+// snapshot itself, and merging in place would rewrite the period every other
+// consumer still reads — twice over, if the snapshot is projected again.
 function foldModelProviderMap(map, resolve) {
   if (!map || typeof map !== 'object') return map;
   const keys = Object.keys(map);
   if (!keys.some((model) => resolve(model) !== model)) return map;
-  const result = new Map();
+  const result = {};
   for (const model of keys) {
     const key = resolve(model);
     const providers = map[model];
     if (!providers || typeof providers !== 'object') continue;
-    const target = result.get(key);
-    if (!target) {
-      result.set(key, providers);
-      continue;
-    }
+    const target = result[key] || (result[key] = {});
     for (const [provider, metrics] of Object.entries(providers)) {
+      if (!metrics || typeof metrics !== 'object') continue;
       const entry = target[provider];
       if (!entry) {
-        target[provider] = metrics;
+        target[provider] = { ...metrics };
         continue;
       }
       for (const metric of Object.keys(entry)) {
@@ -178,7 +181,7 @@ function foldModelProviderMap(map, resolve) {
       }
     }
   }
-  return Object.fromEntries(result);
+  return result;
 }
 
 function projectNestedUsage(map, resolve) {
