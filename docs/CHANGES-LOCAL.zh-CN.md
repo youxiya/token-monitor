@@ -1,7 +1,7 @@
 # 本地修改记录（Local Modifications）
 
-> 基线：上游 `052667e`（token-monitor v0.63.1）。全部修改已提交至自用 fork `youxiya/token-monitor`（origin=上游，fork=自用，上游更新时 fetch 合并）。
-> 记录日期：2026-09-29。
+> 基线：上游 `891ac799`（token-monitor v0.68.0）。全部修改已提交至自用 fork `youxiya/token-monitor`（origin=上游，fork=自用，上游更新时 fetch 合并）。
+> 首次记录：2026-09-29（基线 `052667e` / v0.63.1）。最近更新：2026-10-09（rebase 到 v0.68.0，见第九节）。
 > 机器可回放补丁：[`docs/CHANGES-LOCAL.patch`](CHANGES-LOCAL.patch)（供应用到**上游干净基线**；`git apply` 应用，`git apply -R` 撤销）。
 > 项目导航文档：[`docs/PROJECT_MAP.zh-CN.md`](PROJECT_MAP.zh-CN.md)。
 
@@ -59,9 +59,11 @@ UI：Models 视图顶部的三段切换按钮；i18n 五语言（en / zh-TW / zh
 | 文件 | 问题 | 修复 |
 |---|---|---|
 | `tests/helpers/sourceEnv.js` | guard 漏清 `APPDATA`/`LOCALAPPDATA`，真实 VS Code Copilot 数据泄漏进 presence 断言 | 加入 `SOURCE_ENV_KEYS` |
+| `tests/helpers/sourceEnv.js` | guard 漏清 `DSH_HOME`，真实 `~/.dsh` 会话树泄漏进所有 DSH 夹具（9.4 节） | 加入 `SOURCE_ENV_KEYS` |
 | `tests/shared/clientStatus.test.js` | antigravity presence 探测读到真实 tokscale antigravity-cache | 测试内隔离 `TOKSCALE_CONFIG_DIR` |
 | `tests/shared/customScanPaths.test.js` | Windows 无管理员权限时目录 symlink EPERM | win32 改用 junction |
 | `tests/electron/macWidgetLaunchServicesRecovery.test.js` | 文件 symlink EPERM（junction 只支持目录） | win32 无权限时跳过 helper 子场景（macOS 与提权 CI 仍覆盖） |
+| `tests/shared/collectorSessionTimestamps.test.js`、`collectorTriStatePropagation.test.js`、`dshSessionFiles.test.js` | 未安装 source env guard | 各自 `installSourceEnvGuard(test)` |
 
 ## 三、文档
 
@@ -86,7 +88,7 @@ UI：Models 视图顶部的三段切换按钮；i18n 五语言（en / zh-TW / zh
 
 ## 五、验证结论
 
-- `npm test`：**5250 通过 / 0 失败**（含新增 10 个用例）。
+- `npm test`：**5250 通过 / 0 失败**（含新增 10 个用例）。← 2026-09-29 首版基线；当前状态见第九节。
 - `npm run lint`：无告警。
 - `npm run sync:worker` + `npm run update:hub-build`：已执行，Hub 构建身份 registry 已更新（核心闭包哈希变化 → core rev 追加）。
 - 真实 DSH 数据端到端验证（本机 `~/.dsh`，90 会话 / 103 路由条目）：
@@ -96,7 +98,7 @@ UI：Models 视图顶部的三段切换按钮；i18n 五语言（en / zh-TW / zh
 ## 六、回放与撤销
 
 ```bash
-# 在上游 v0.63.1（052667e 或之后）的工作区应用全部修改：
+# 在上游 v0.68.0（891ac799）的工作区应用全部修改：
 git apply docs/CHANGES-LOCAL.patch
 # 撤销：
 git apply -R docs/CHANGES-LOCAL.patch
@@ -134,3 +136,49 @@ git apply -R docs/CHANGES-LOCAL.patch
 修改（M）：`AGENTS.md`、`src/electron/main.js`、`src/electron/modelAliasPresentation.js`、`src/electron/renderer/app.js`、`src/electron/renderer/i18n.js`、`src/electron/renderer/index.html`、`src/electron/renderer/styles.css`、`src/shared/hubBuildRegistry.json`、`src/shared/usage.js`、`tests/electron/macWidgetLaunchServicesRecovery.test.js`、`tests/electron/modelAliasPresentation.test.js`、`tests/helpers/sourceEnv.js`、`tests/shared/clientStatus.test.js`、`tests/shared/customScanPaths.test.js`、`tests/shared/usage.test.js`、`worker/src/shared/hubBuildRegistry.json`、`worker/src/shared/usage.js`
 
 新增：`docs/PROJECT_MAP.zh-CN.md`、`docs/CHANGES-LOCAL.zh-CN.md`、`docs/CHANGES-LOCAL.patch`、`docs/USAGE-INTERFACES.zh-CN.md`、`docs/NETWORK-SETUP.zh-CN.md`、`src/electron/renderer/modelBreakdownRows.js`、`tests/electron/modelBreakdownRows.test.js`
+
+## 九、2026-10-09：rebase 到上游 v0.68.0 + 刷新延迟排查
+
+### 9.1 上游同步
+
+`git fetch origin && git rebase origin/main`：4 个本地提交（原 `47fdbd50`…`a4a0168f`）无冲突重放到 `891ac799`（v0.68.0，Electron 43.7.9）之上；唯一冲突是 `hubBuildRegistry.json` 的 core revision 75 —— 上游 release 提交已占用该编号，本地那条基于旧闭包哈希已作废，**保留上游的 75**，本地改动由 `npm run update:hub-build` 追加为 revision 76。重放前的原状态留有 `backup/local-work` 分支与 `pre-rebase-local` 标签。
+
+### 9.2 「token 统计要手动刷新」的排查结论（未复现）
+
+反馈是：改版后 token 统计延迟高、要手动刷新。用本机真实数据（`%APPDATA%\Token Monitor\collector-anchor.json`、真实 tokscale 扫描、真实客户端目录）做了 A/B，**没有复现出这次改动引入的刷新回归**：
+
+| 测量项 | 上游 891ac799 | 本地 | 结论 |
+|---|---|---|---|
+| 真实 warm tick（锚定 `--today`，含 normalize + aggregate） | 931 ms | 927 ms | 无差异 |
+| 真实 anchor 上的 `normalizePeriod` / `applyPeriodDelta` / `normalizeDeviceRecord` / `aggregateDevices` | 基准 | 全部持平（±3%，噪声内） | 无差异 |
+| `extractUsageFromTokscale`（9000 行，dsh 式 1/3 带路由 / 全无路由） | 基准 | −1.7% / −2.7% | 无差异 |
+| 两次 warm tick 的 `--cpu-prof` self-time 前 22 项 | 基准 | 逐项吻合，`modelProviders` 代码未进榜 | 无差异 |
+| 打包版 `dist/win-unpacked` vs 源码版 | — | 均 0 long task、0 breakdown 重建 | 无回归 |
+| 实跑 widget（源码版 + 打包版，CDP 探针） | — | watch tick 间隔中位数 3.6 s，record→push 6–10 ms | 符合 3–5 s 承诺 |
+
+唯一确认的成本是**载荷变大**：allTime JSON 增加约 0.8%（`modelProviders` 随 record 一起下发，没有任何地方像 `sessions` 那样被剥离）。本机 today 只有 2 个路由条目，量级可忽略。
+
+排查中排除的假设：`worker/src/shared/` 与 `src/shared/` 漂移（`npm run sync:worker` 干净）；`app.asar` 缺文件（`worker/` 是 Cloudflare Worker，本就不该进桌面包）；renderer 静默抛错（preload 的 `try/catch` 会吞异常，但 CDP 探针显示 0 long task、`render()` 正常跑完）。
+
+### 9.3 顺带修掉的两个缺陷
+
+| 文件 | 问题 | 修复 |
+|---|---|---|
+| `src/electron/modelAliasPresentation.js` | `foldModelProviderMap` 把**源 period 的子对象直接放进结果**再就地累加，等于改写了已发布的快照（`docs/architecture.md` 的不可变约定）。同一个快照被二次投影（presentation 重算）时数字会翻倍 | 合并进新建的容器、条目一律 `{ ...metrics }` 拷贝；补 `tests/electron/modelAliasPresentation.test.js` 回归用例 |
+| `src/shared/usage.js` | `normalizeProviderName` 对**每一条**扫描行都跑一遍正则，多数行根本没有 `provider` | 缺失值提前返回（语义不变：`0` / `false` 仍视为无路由）；补 `tests/shared/usage.test.js` 用例锁定字符串 / 空串 / 空白 / null / 缺字段五种写法 |
+
+第二条**实测无可测量收益**（V8 对空串 `replace` 已优化得很好），保留它是因为它位于全局最热的循环上且是明显的意图声明，不要当成性能修复看待。
+
+### 9.4 顺带修掉的本机测试污染（同第二节那一类）
+
+排查过程中顺带定位并修掉了第二节那批 Windows 测试污染的**遗漏项**：本机导出了 `DSH_HOME=C:\Users\ACER\.dsh`，而 `resolveDshHome()` 先看 `DSH_HOME` 再回落 `~/.dsh`，所以所有把 `homeDir` 指向临时夹具的 DSH 测试，实际都去读了**真实的** `~/.dsh` 会话树 —— 夹具会话表现为「有记录、无 transcript」，是静默 miss 而不是报错。表现是 10 个断言失败（`collectorSessionTimestamps`×7、`collectorTriStatePropagation`×2、`dshSessionFiles`×1），在上游 `origin/main` 上逐一复现。
+
+修法沿用第二节已有机制，没有新造：`DSH_HOME` 加进 `tests/helpers/sourceEnv.js` 的 `SOURCE_ENV_KEYS`，并在这三个测试文件里 `installSourceEnvGuard(test)`（该文件顶部注释本身就要求「按文件安装，而不是逐用例记住」）。修正后 **49 通过 / 0 失败**。
+
+### 9.5 当前验证状态
+
+- `npm run lint`：无告警。
+- `npm test`：**6214 通过 / 1 失败**（该唯一失败见下）。
+- `npm run sync:worker` + `npm run update:hub-build`：已执行，core revision 76。
+
+> 唯一剩余失败：`tests/agent/titleSync.test.js` 的 "real process exit after remote admission…" —— 测试让子进程在 `fetch` 回调里 `process.exit(0)`，Windows 上该子进程以 `3221226505`（`0xC0000409`）退出。在 `origin/main` 上同样稳定复现，属上游 Windows 问题，与本地改动无关。要修就得改这个测试「如何退出」，那会改变它验证的东西，故留待单独处理。
