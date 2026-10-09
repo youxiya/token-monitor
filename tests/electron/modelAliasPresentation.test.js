@@ -269,3 +269,32 @@ test('modelProviders folds under alias groups while keeping the provider dimensi
   });
   assert.equal(projected.periods.today.models['claude-opus-5'], 60);
 });
+
+test('folding modelProviders does not write the merge back into the source period', () => {
+  const build = () => ({
+    periods: { today: {
+      totalTokens: 90,
+      models: { 'anthropic/claude-opus-5': 40, 'claude-opus-5': 20, other: 30 },
+      modelProviders: {
+        'anthropic/claude-opus-5': { router: { tokens: 40, costUsd: 0.4, cacheReadTokens: 4, cacheWriteTokens: 0, outputTokens: 8 } },
+        'claude-opus-5': { router: { tokens: 20, costUsd: 0.2, cacheReadTokens: 2, cacheWriteTokens: 1, outputTokens: 4 } },
+        other: { router: { tokens: 30, costUsd: 0, cacheReadTokens: 0, cacheWriteTokens: 0, outputTokens: 0 } }
+      }
+    } }
+  });
+
+  const first = build();
+  const firstProjection = projectModelAliasStats(first, aliases, { grouping: 'off' });
+  assert.equal(firstProjection.periods.today.modelProviders['claude-opus-5'].router.tokens, 60);
+  assert.equal(
+    first.periods.today.modelProviders['anthropic/claude-opus-5'].router.tokens,
+    40,
+    'merging two models into one alias must not rewrite the period being projected'
+  );
+  assert.equal(first.periods.today.modelProviders['claude-opus-5'].router.tokens, 20);
+
+  // The published snapshot is projected again whenever presentation is recomputed,
+  // so an in-place merge would double the totals every time it ran.
+  const secondProjection = projectModelAliasStats(first, aliases, { grouping: 'off' });
+  assert.equal(secondProjection.periods.today.modelProviders['claude-opus-5'].router.tokens, 60);
+});
