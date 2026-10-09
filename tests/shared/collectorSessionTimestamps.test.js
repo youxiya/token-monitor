@@ -9,6 +9,9 @@ const test = require('node:test');
 const { applySessionTimestamps } = require('../../src/shared/collector');
 const { indexDshSessionHeaders } = require('../../src/shared/providers/dsh/sessionFiles');
 const { installInProcessWatchHost } = require('../helpers/watchHost');
+const { installSourceEnvGuard } = require('../helpers/sourceEnv');
+
+installSourceEnvGuard(test);
 
 installInProcessWatchHost(test);
 

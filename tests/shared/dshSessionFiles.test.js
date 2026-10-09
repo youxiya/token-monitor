@@ -8,6 +8,10 @@ const path = require('node:path');
 const zlib = require('node:zlib');
 const test = require('node:test');
 
+const { installSourceEnvGuard } = require('../helpers/sourceEnv');
+
+installSourceEnvGuard(test);
+
 const {
   decodeFirstFrameText,
   decodeSessionText,
