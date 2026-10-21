@@ -151,10 +151,50 @@ test('the seed removes legacy Reasonix stats paths from ordinary period sessions
   assert.deepEqual(record.month.sessions, {});
 });
 
-test('an anchor from another local day is refused', () => {
-  assert.equal(deviceRecordFromAnchor(anchorFixture({ dateKey: '2026-08-07' }), seedOptions()), null);
+test('an anchor from another local day seeds the previous run’s record', () => {
+  // A reboot across midnight leaves yesterday's anchor behind, and the collector
+  // cannot use it as a delta base — its arithmetic needs the same local day. The
+  // widget has no such arithmetic, and an empty card until the first full scan
+  // lands is the wait this path exists to remove.
+  const record = deviceRecordFromAnchor(anchorFixture({ dateKey: '2026-08-07' }), seedOptions());
+
+  assert.notEqual(record, null);
+  // The record is the one the anchor captured: same three periods, so the
+  // widget has real numbers on screen instead of zeros.
+  assert.equal(record.today.totalTokens, 1_000);
+  assert.equal(record.month.totalTokens, 30_000);
+  assert.equal(record.allTime.totalTokens, 900_000);
+  // The timestamp is the anchor's own, not this run's: the record says how old
+  // it is rather than passing an old snapshot off as a fresh one. The widget
+  // turns it into the note under the total.
+  assert.equal(record.updatedAt, FULL_SCAN_AT);
+  assert.equal(record.receivedAt, FULL_SCAN_AT);
+  // The windows are this run's, so the kept periods are read as current.
+  assert.equal(record.periodWindows.today.key, '2026-08-08');
+});
+
+test('a stale seed survives aggregation and still reads as this run', () => {
+  const record = deviceRecordFromAnchor(anchorFixture({ dateKey: '2026-08-07' }), seedOptions());
+  const seeded = aggregateDevices([record], 0, NOW.getTime());
+
+  // The periods the anchor captured are summed as they are — that is the
+  // point of the seed. Without the current windows the aggregate's fallback
+  // comparison would call the closed day expired and drop it, which is the
+  // zero this path exists to avoid.
+  assert.equal(seeded.periods.today.totalTokens, 1_000);
+  assert.equal(seeded.periods.month.totalTokens, 30_000);
+  assert.equal(seeded.periods.allTime.totalTokens, 900_000);
+});
+
+test('an anchor that cannot describe the current configuration is refused', () => {
+  // The collector drops these anchors on load, so seeding from one would put
+  // the old configuration's totals on screen and then silently drop them.
   assert.equal(deviceRecordFromAnchor(null, seedOptions()), null);
   assert.equal(deviceRecordFromAnchor(anchorFixture({ month: null }), seedOptions()), null);
+  // Age alone no longer refuses an anchor; a moved configuration still does.
+  assert.equal(deviceRecordFromAnchor(anchorFixture({ dateKey: '2026-08-07' }), seedOptions({ clients: 'claude' })), null);
+  assert.equal(deviceRecordFromAnchor(anchorFixture({ dateKey: '2026-08-07' }), seedOptions({ allTimeSince: '2025-01-01' })), null);
+  assert.equal(deviceRecordFromAnchor(anchorFixture({ dateKey: '2026-08-07' }), seedOptions({ projectsEnabled: false })), null);
 });
 
 test('an anchor whose capture time cannot be trusted is refused', () => {
