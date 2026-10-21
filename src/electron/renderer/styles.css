@@ -3446,6 +3446,15 @@ html.is-windows .settings-panel select option {
 }
 .cost { margin-top: var(--total-cost-gap); color: var(--readable-muted); font-size: 0.75rem; }
 .cost { display: flex; align-items: center; gap: 3px; }
+/* Says how old the cold-start seed on screen is. The number above it is the
+   previous run's record after a reboot across midnight, so the note is what
+   keeps it from being read as a live reading. */
+.total-seed-note {
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 0.6875rem;
+  line-height: 1.3;
+}
 .usage-cost-value { white-space: nowrap; }
 .usage-cost-info.limit-detail-tooltip-wrap {
   width: 11px;
