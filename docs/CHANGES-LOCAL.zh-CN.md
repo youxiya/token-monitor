@@ -219,9 +219,12 @@ rebase 后 `git diff upstream/main main` = **27 文件 / +4854 / −21**，与 r
 
 | 失败用例 | 结论 |
 |---|---|
-| `tests/agent/titleSync.test.js` "real process exit after remote admission…" | 上游 Windows 问题，退出码 `3221226505`（`0xC0000409`），9.5 已记录，未变；纯上游基线同样失败 |
-| `tests/shared/verifyVendoredTokscaleRelease.test.js` "real vendor manifest derives complete target coverage from @tokscale/cli" | 本机 `node_modules` 的 `@tokscale/cli` 仍是 4.18.0，上游 manifest 已提到 4.20.0 —— 环境落后于上游，非代码问题；纯上游基线同样失败 |
-| `tests/shared/usageHost.test.js` "a subprocess on the worker does not outlive a process that exits right after stopping it" | 偶发项（退出码 `3221225477` = `0xC0000005` 访问违例）：全量并行跑时出现过 2 次、也通过过 2 次；单独跑该文件时本地与上游**都通过**。属 Windows 子进程退出竞态，与本地改动无关 |
+| `tests/agent/titleSync.test.js` "real process exit after remote admission…" | 上游 Windows 问题，退出码 `3221226505`（`0xC0000409`），9.5 已记录，未变；纯上游基线同样失败。**稳定复现**，单独跑该文件时 21 通过 / 1 失败，连续 3 次一致 |
+| `tests/shared/verifyVendoredTokscaleRelease.test.js` "real vendor manifest derives complete target coverage from @tokscale/cli" | 本机 `node_modules` 的 `@tokscale/cli` 仍是 4.18.0，上游 manifest 已提到 4.20.0 —— 环境落后于上游，非代码问题；纯上游基线同样失败。**已修复**：跑一次 `npm install` 把 `node_modules` 刷到 4.20.0 后该用例转绿（12 通过 / 0 失败），详见 11.4 |
+| 偶发项：`tests/agent/titleSync.test.js` 的 "restart revokes old {hub,device,credential} binding…" 三个变体之一，偶发还有 `tests/shared/usageHost.test.js` | 只在**全量并行**跑时出现，单独跑对应文件稳定通过（titleSync 连跑 3 次均 21 通过 / 1 失败）。属 Windows 子进程退出竞态，与本地改动无关 |
+
+> 排查偶发项时有两个环境噪音要清掉，否则会把它们误判成回归：僵留的 `npx tokscale@latest` 进程（会占着 npm 缓存，实测能让整轮全量测试挂死在一个 forked 子进程上），以及全量跑时的并行负载。前者 `Stop-Process` 清掉即可，后者只能靠单独跑对应文件来区分。
+
 
 > 前两个失败都不需要动代码：前者要改测试「如何退出」才能过，那会改变它验证的东西；后者只需把 `node_modules` 刷到 `@tokscale/cli` 4.20.0。两者都留待单独处理。
 
