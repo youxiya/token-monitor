@@ -1,7 +1,7 @@
 # 本地修改记录（Local Modifications）
 
-> 基线：上游 `891ac799`（token-monitor v0.68.0）。全部修改已提交至自用 fork `youxiya/token-monitor`（origin=上游，fork=自用，上游更新时 fetch 合并）。
-> 首次记录：2026-09-29（基线 `052667e` / v0.63.1）。最近更新：2026-10-09（rebase 到 v0.68.0，见第九节）。
+> 基线：上游 `ce26462f`（token-monitor v0.76.0）。全部修改已提交至自用 fork `youxiya/token-monitor`（`origin`=自用 fork，`upstream`=上游 Javis603；上游更新时 `git fetch upstream` 后 `git rebase upstream/main`）。
+> 首次记录：2026-09-29（基线 `052667e` / v0.63.1）。最近更新：2026-10-21（rebase 到 v0.76.0，见第十节）。
 > 机器可回放补丁：[`docs/CHANGES-LOCAL.patch`](CHANGES-LOCAL.patch)（供应用到**上游干净基线**；`git apply` 应用，`git apply -R` 撤销）。
 > 项目导航文档：[`docs/PROJECT_MAP.zh-CN.md`](PROJECT_MAP.zh-CN.md)。
 
@@ -98,7 +98,7 @@ UI：Models 视图顶部的三段切换按钮；i18n 五语言（en / zh-TW / zh
 ## 六、回放与撤销
 
 ```bash
-# 在上游 v0.68.0（891ac799）的工作区应用全部修改：
+# 在上游 v0.76.0（ce26462f）的工作区应用全部修改：
 git apply docs/CHANGES-LOCAL.patch
 # 撤销：
 git apply -R docs/CHANGES-LOCAL.patch
@@ -182,3 +182,45 @@ git apply -R docs/CHANGES-LOCAL.patch
 - `npm run sync:worker` + `npm run update:hub-build`：已执行，core revision 76。
 
 > 唯一剩余失败：`tests/agent/titleSync.test.js` 的 "real process exit after remote admission…" —— 测试让子进程在 `fetch` 回调里 `process.exit(0)`，Windows 上该子进程以 `3221226505`（`0xC0000409`）退出。在 `origin/main` 上同样稳定复现，属上游 Windows 问题，与本地改动无关。要修就得改这个测试「如何退出」，那会改变它验证的东西，故留待单独处理。
+
+## 十、2026-10-21：rebase 到上游 v0.76.0
+
+### 10.1 上游同步
+
+`git fetch upstream` 后 `upstream/main` = `ce26462f`（v0.76.0 发布后 9 个提交），比上次同步点 `891ac799` 前进 **97 个提交**。8 个本地提交 `git rebase upstream/main` 全部重放，**2 处冲突**，都在 `src/shared/hubBuildRegistry.json` 与 `worker/src/shared/hubBuildRegistry.json` 的 core 列表尾端。
+
+冲突处理沿用 9.1 的约定：**保留上游的 core 列表**（1..90），本地闭包交给 `npm run update:hub-build` 追加，而不是手改生成的 Worker 元数据。本次追加为 **core revision 91**（`sha256:0798135f…`）。重放前的原状态留有分支 `backup/pre-rebase-20261021` 与标签 `pre-rebase-local-20261021`。
+
+其余文件全部自动合并 —— 上游 97 个提交与本地改动的 hunk 基本不相交，`src/electron/renderer/app.js`（上游 +2015 行）与 `src/shared/usage.js`（上游 +149 行）都一次过。
+
+### 10.2 功能保留验证
+
+上游这 97 个提交**完全不涉及**本地功能用到的符号 —— `git grep 'modelProviders\|model_providers\|modelBreakdownMode\|foldModelProviderMap' upstream/main` 零命中。所以本地功能与上游的 `feat(projects): add tool and model breakdown toggle (#1086)` 不冲突：后者是**项目视图**里「工具 / 模型」的分组维度，本地这项是**供应商路由**维度的拆分，两者正交。
+
+rebase 后 `git diff upstream/main main` = **27 文件 / +4854 / −21**，与 rebase 前的形态一致（仅多出 hub build registry 的 revision 91）。三模式接线逐项复核通过：
+
+| 位置 | 状态 |
+|---|---|
+| `src/electron/renderer/index.html` | `modelBreakdownModeHost` 按钮组 + `<script src="modelBreakdownRows.js">` |
+| `src/electron/renderer/i18n.js` | `views.modelBreakdownMode` / `views.modelBreakdown.{mixed,model,provider}` × 6 语言（en / zh-TW / zh-CN / ko / ja / pt-BR） |
+| `src/electron/main.js` | `defaultSettings.modelBreakdownMode = 'mixed'` + `normalizeModelBreakdownMode` + `settings:update` 白名单 |
+| `src/electron/renderer/app.js` | `modelRowsForPeriod` 三模式分发、`syncModelBreakdownModeControls`、render() 显隐、点击绑定 |
+| `src/shared/usage.js` | `modelProviders` 的 emptyPeriod / addUsageRowToPeriod / normalizePeriod / addPeriodInto / cursor-auto 重键迁移 |
+| `src/electron/modelAliasPresentation.js` | `foldModelProviderMap`（不写入源 period 的拷贝式合并） |
+
+### 10.3 验证状态
+
+- `npm run lint`：无告警。
+- `npm test`：**7564 通过 / 3 失败**。
+- `npm run sync:worker` + `npm run update:hub-build`：已执行，core revision 91。
+- `docs/CHANGES-LOCAL.patch`：按新基线 `ce26462f` 重建。
+
+三个失败经**纯上游基线对照**确认与本地改动无关 —— 把本地改动 stash 后 `git switch --detach upstream/main` 跑同样三个文件，上游同样失败同样两个：
+
+| 失败用例 | 结论 |
+|---|---|
+| `tests/agent/titleSync.test.js` "real process exit after remote admission…" | 上游 Windows 问题，退出码 `3221226505`（`0xC0000409`），9.5 已记录，未变 |
+| `tests/shared/verifyVendoredTokscaleRelease.test.js` "real vendor manifest derives complete target coverage from @tokscale/cli" | 本机 `node_modules` 的 `@tokscale/cli` 仍是 4.18.0，上游 manifest 已提到 4.20.0 —— 环境落后于上游，非代码问题 |
+| `tests/shared/usageHost.test.js` "a subprocess on the worker does not outlive a process that exits right after stopping it" | 只在全量并行跑时出现（退出码 `3221225477` = `0xC0000005` 访问违例）；单独跑该文件时本地与上游**都通过**，属并行下的偶发 |
+
+> 前两个失败都不需要动代码：前者要改测试「如何退出」才能过，那会改变它验证的东西；后者只需把 `node_modules` 刷到 `@tokscale/cli` 4.20.0。两者都留待单独处理。

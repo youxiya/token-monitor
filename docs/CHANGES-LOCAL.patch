@@ -1,5 +1,5 @@
 diff --git a/AGENTS.md b/AGENTS.md
-index b26601c8..e9e2e970 100644
+index aaeb9154..217a777b 100644
 --- a/AGENTS.md
 +++ b/AGENTS.md
 @@ -22,6 +22,7 @@ To dry-run the agent without posting: `npm run agent:once -- --dry-run`.
@@ -8,18 +8,18 @@ index b26601c8..e9e2e970 100644
  |---|---|
 +| anything — locate the owning file/function before reading code | `docs/PROJECT_MAP.zh-CN.md`（全项目功能→文件地图：子系统区块图、IPC 速查、修改任务速查、雷区） |
  | a boundary shared by the widget, agent, Hub or Worker; the collector, limits runtime, credentials or wire record | `docs/architecture.md` |
- | anything under `src/shared/providers/<id>/` or `src/electron/providers/<id>/` | `docs/providers/README.md`, then the note whose `ids:` front matter lists that id if one exists — `grep -lE '^ids:.*[[, ]<id>[],]' docs/providers/*.md`. Most providers have no note; the README and the code/tests are then authoritative |
- | adding or renaming a tracked client or limits provider | `docs/providers/README.md` (both registration checklists) |
+ | an existing provider under `src/shared/providers/<id>/` or `src/electron/providers/<id>/` | The note whose `ids:` front matter lists that id — `grep -lE '^ids:.*[[, ]<id>[],]' docs/providers/*.md`; use its `read_when` to select relevant guidance. If none exists, use the code/tests and [shared code layout](docs/providers/README.md#where-provider-code-lives) |
+ | adding or renaming a tracked client | [Tracked-client checklist](docs/providers/README.md#adding-a-tracked-client), including its partition invariants |
 diff --git a/docs/CHANGES-LOCAL.zh-CN.md b/docs/CHANGES-LOCAL.zh-CN.md
 new file mode 100644
-index 00000000..2b7d01e9
+index 00000000..11cb8da8
 --- /dev/null
 +++ b/docs/CHANGES-LOCAL.zh-CN.md
-@@ -0,0 +1,184 @@
+@@ -0,0 +1,226 @@
 +# 本地修改记录（Local Modifications）
 +
-+> 基线：上游 `891ac799`（token-monitor v0.68.0）。全部修改已提交至自用 fork `youxiya/token-monitor`（origin=上游，fork=自用，上游更新时 fetch 合并）。
-+> 首次记录：2026-09-29（基线 `052667e` / v0.63.1）。最近更新：2026-10-09（rebase 到 v0.68.0，见第九节）。
++> 基线：上游 `ce26462f`（token-monitor v0.76.0）。全部修改已提交至自用 fork `youxiya/token-monitor`（`origin`=自用 fork，`upstream`=上游 Javis603；上游更新时 `git fetch upstream` 后 `git rebase upstream/main`）。
++> 首次记录：2026-09-29（基线 `052667e` / v0.63.1）。最近更新：2026-10-21（rebase 到 v0.76.0，见第十节）。
 +> 机器可回放补丁：[`docs/CHANGES-LOCAL.patch`](CHANGES-LOCAL.patch)（供应用到**上游干净基线**；`git apply` 应用，`git apply -R` 撤销）。
 +> 项目导航文档：[`docs/PROJECT_MAP.zh-CN.md`](PROJECT_MAP.zh-CN.md)。
 +
@@ -116,7 +116,7 @@ index 00000000..2b7d01e9
 +## 六、回放与撤销
 +
 +```bash
-+# 在上游 v0.68.0（891ac799）的工作区应用全部修改：
++# 在上游 v0.76.0（ce26462f）的工作区应用全部修改：
 +git apply docs/CHANGES-LOCAL.patch
 +# 撤销：
 +git apply -R docs/CHANGES-LOCAL.patch
@@ -200,6 +200,48 @@ index 00000000..2b7d01e9
 +- `npm run sync:worker` + `npm run update:hub-build`：已执行，core revision 76。
 +
 +> 唯一剩余失败：`tests/agent/titleSync.test.js` 的 "real process exit after remote admission…" —— 测试让子进程在 `fetch` 回调里 `process.exit(0)`，Windows 上该子进程以 `3221226505`（`0xC0000409`）退出。在 `origin/main` 上同样稳定复现，属上游 Windows 问题，与本地改动无关。要修就得改这个测试「如何退出」，那会改变它验证的东西，故留待单独处理。
++
++## 十、2026-10-21：rebase 到上游 v0.76.0
++
++### 10.1 上游同步
++
++`git fetch upstream` 后 `upstream/main` = `ce26462f`（v0.76.0 发布后 9 个提交），比上次同步点 `891ac799` 前进 **97 个提交**。8 个本地提交 `git rebase upstream/main` 全部重放，**2 处冲突**，都在 `src/shared/hubBuildRegistry.json` 与 `worker/src/shared/hubBuildRegistry.json` 的 core 列表尾端。
++
++冲突处理沿用 9.1 的约定：**保留上游的 core 列表**（1..90），本地闭包交给 `npm run update:hub-build` 追加，而不是手改生成的 Worker 元数据。本次追加为 **core revision 91**（`sha256:0798135f…`）。重放前的原状态留有分支 `backup/pre-rebase-20261021` 与标签 `pre-rebase-local-20261021`。
++
++其余文件全部自动合并 —— 上游 97 个提交与本地改动的 hunk 基本不相交，`src/electron/renderer/app.js`（上游 +2015 行）与 `src/shared/usage.js`（上游 +149 行）都一次过。
++
++### 10.2 功能保留验证
++
++上游这 97 个提交**完全不涉及**本地功能用到的符号 —— `git grep 'modelProviders\|model_providers\|modelBreakdownMode\|foldModelProviderMap' upstream/main` 零命中。所以本地功能与上游的 `feat(projects): add tool and model breakdown toggle (#1086)` 不冲突：后者是**项目视图**里「工具 / 模型」的分组维度，本地这项是**供应商路由**维度的拆分，两者正交。
++
++rebase 后 `git diff upstream/main main` = **27 文件 / +4854 / −21**，与 rebase 前的形态一致（仅多出 hub build registry 的 revision 91）。三模式接线逐项复核通过：
++
++| 位置 | 状态 |
++|---|---|
++| `src/electron/renderer/index.html` | `modelBreakdownModeHost` 按钮组 + `<script src="modelBreakdownRows.js">` |
++| `src/electron/renderer/i18n.js` | `views.modelBreakdownMode` / `views.modelBreakdown.{mixed,model,provider}` × 6 语言（en / zh-TW / zh-CN / ko / ja / pt-BR） |
++| `src/electron/main.js` | `defaultSettings.modelBreakdownMode = 'mixed'` + `normalizeModelBreakdownMode` + `settings:update` 白名单 |
++| `src/electron/renderer/app.js` | `modelRowsForPeriod` 三模式分发、`syncModelBreakdownModeControls`、render() 显隐、点击绑定 |
++| `src/shared/usage.js` | `modelProviders` 的 emptyPeriod / addUsageRowToPeriod / normalizePeriod / addPeriodInto / cursor-auto 重键迁移 |
++| `src/electron/modelAliasPresentation.js` | `foldModelProviderMap`（不写入源 period 的拷贝式合并） |
++
++### 10.3 验证状态
++
++- `npm run lint`：无告警。
++- `npm test`：**7564 通过 / 3 失败**。
++- `npm run sync:worker` + `npm run update:hub-build`：已执行，core revision 91。
++- `docs/CHANGES-LOCAL.patch`：按新基线 `ce26462f` 重建。
++
++三个失败经**纯上游基线对照**确认与本地改动无关 —— 把本地改动 stash 后 `git switch --detach upstream/main` 跑同样三个文件，上游同样失败同样两个：
++
++| 失败用例 | 结论 |
++|---|---|
++| `tests/agent/titleSync.test.js` "real process exit after remote admission…" | 上游 Windows 问题，退出码 `3221226505`（`0xC0000409`），9.5 已记录，未变 |
++| `tests/shared/verifyVendoredTokscaleRelease.test.js` "real vendor manifest derives complete target coverage from @tokscale/cli" | 本机 `node_modules` 的 `@tokscale/cli` 仍是 4.18.0，上游 manifest 已提到 4.20.0 —— 环境落后于上游，非代码问题 |
++| `tests/shared/usageHost.test.js` "a subprocess on the worker does not outlive a process that exits right after stopping it" | 只在全量并行跑时出现（退出码 `3221225477` = `0xC0000005` 访问违例）；单独跑该文件时本地与上游**都通过**，属并行下的偶发 |
++
++> 前两个失败都不需要动代码：前者要改测试「如何退出」才能过，那会改变它验证的东西；后者只需把 `node_modules` 刷到 `@tokscale/cli` 4.20.0。两者都留待单独处理。
 diff --git a/docs/NETWORK-SETUP.zh-CN.md b/docs/NETWORK-SETUP.zh-CN.md
 new file mode 100644
 index 00000000..e1682e9c
@@ -1339,10 +1381,10 @@ index 00000000..a8aec2b1
 +5. **要多设备聚合**：wire record 形状见 `docs/API.md`（periods 五桶 + clientStatus + periodWindows 过期冻结 + stale 灰显），Hub 归一化在 `normalizeDeviceRecord`（未知枚举降级 unknown、计数封顶、原型敏感键拒收）。
 +6. **测试**：数据源测试要清空 `HOME/USERPROFILE/APPDATA/LOCALAPPDATA/XDG_*/<各客户端 HOME env>`（真机泄漏会让正确实现红测，见 token-monitor `tests/helpers/sourceEnv.js`）；时区敏感断言用本地日历分量构造时间戳。
 diff --git a/src/electron/main.js b/src/electron/main.js
-index 7b773c95..af2b6c05 100644
+index c925383e..27fee271 100644
 --- a/src/electron/main.js
 +++ b/src/electron/main.js
-@@ -579,6 +579,7 @@ function defaultSettings() {
+@@ -610,6 +610,7 @@ function defaultSettings() {
      tokenRateMode: 'speed',
      heatmapMetric: 'cost',
      modelRankingMetric: 'tokens',
@@ -1350,7 +1392,7 @@ index 7b773c95..af2b6c05 100644
      homeActiveDaysWindow: 'all',
      // How a live session's context gauge reads. That direction is a choice the
      // gauge cannot make on its own, so it is stated here rather than assumed:
-@@ -732,6 +733,12 @@ function normalizeHeatmapMetric(value, fallback = 'cost') {
+@@ -785,6 +786,12 @@ function normalizeHeatmapMetric(value, fallback = 'cost') {
    return fallback === 'tokens' ? 'tokens' : 'cost';
  }
  
@@ -1363,7 +1405,7 @@ index 7b773c95..af2b6c05 100644
  function normalizeHomeActiveDaysWindow(value, fallback = 'all') {
    const next = String(value || '').trim();
    if (next === 'year') return 'year';
-@@ -2557,6 +2564,7 @@ function readSettings() {
+@@ -2685,6 +2692,7 @@ function readSettings() {
      merged.syncUploadIntervalMs = normalizeSyncUploadIntervalMs(merged.syncUploadIntervalMs);
      merged.heatmapMetric = normalizeHeatmapMetric(merged.heatmapMetric);
      merged.modelRankingMetric = normalizeRankingMetric(merged.modelRankingMetric);
@@ -1371,7 +1413,7 @@ index 7b773c95..af2b6c05 100644
      merged.homeActiveDaysWindow = normalizeHomeActiveDaysWindow(merged.homeActiveDaysWindow);
      merged.sessionTitlesEnabled = parseBoolean(merged.sessionTitlesEnabled, true);
      merged.sessionContextMetric = normalizeSessionContextMetric(merged.sessionContextMetric);
-@@ -7589,6 +7597,7 @@ app.whenReady().then(() => {
+@@ -8055,6 +8063,7 @@ app.whenReady().then(() => {
        periodMonthMode: normalizePeriodMonthMode(patch.periodMonthMode ?? settings.periodMonthMode),
        modelRankingMetric: normalizeRankingMetric(patch.modelRankingMetric ?? settings.modelRankingMetric),
        sessionTitlesEnabled: parseBoolean(patch.sessionTitlesEnabled ?? settings.sessionTitlesEnabled, true),
@@ -1380,7 +1422,7 @@ index 7b773c95..af2b6c05 100644
        historyEnabled: parseBoolean(patch.historyEnabled ?? settings.historyEnabled, false),
        projectsEnabled: parseBoolean(patch.projectsEnabled ?? settings.projectsEnabled, true),
 diff --git a/src/electron/modelAliasPresentation.js b/src/electron/modelAliasPresentation.js
-index 7f209014..cc3f528d 100644
+index 58d108d5..12764f17 100644
 --- a/src/electron/modelAliasPresentation.js
 +++ b/src/electron/modelAliasPresentation.js
 @@ -147,6 +147,43 @@ function foldModelThroughput(value, resolve) {
@@ -1436,10 +1478,10 @@ index 7f209014..cc3f528d 100644
    ['projects', projectNestedUsage]
  ];
 diff --git a/src/electron/renderer/app.js b/src/electron/renderer/app.js
-index b3730d25..b517d4c9 100644
+index 89d9d2f6..3ee42976 100644
 --- a/src/electron/renderer/app.js
 +++ b/src/electron/renderer/app.js
-@@ -193,6 +193,7 @@ const {
+@@ -196,6 +196,7 @@ const {
  const deviceBreakdownApi = window.TokenMonitorDeviceBreakdown;
  const toolDetailsApi = window.TokenMonitorToolDetails;
  const usageAttributionRowsApi = window.TokenMonitorUsageAttributionRows;
@@ -1447,7 +1489,7 @@ index b3730d25..b517d4c9 100644
  const projectRowsApi = window.TokenMonitorProjectRows;
  const sessionDetailApi = window.TokenMonitorSessionDetail;
  const windowShortcutApi = window.TokenMonitorWindowShortcut;
-@@ -369,7 +370,7 @@ let viewSwitcherLongPressTimer = null;
+@@ -373,7 +374,7 @@ let viewSwitcherLongPressTimer = null;
  let viewSwitcherLongPressTriggered = false;
  let viewSwitcherHoverCloseTimer = null;
  const els = {
@@ -1456,7 +1498,7 @@ index b3730d25..b517d4c9 100644
    subscriptionList: document.getElementById('subscriptionList'), subscriptionAddForm: document.getElementById('subscriptionAddForm'), subscriptionAddToggle: document.getElementById('subscriptionAddToggle'), subscriptionAddDetails: document.getElementById('subscriptionAddDetails'), subscriptionProviderInput: document.getElementById('subscriptionProviderInput'), subscriptionAccountInput: document.getElementById('subscriptionAccountInput'), subscriptionPlanNameInput: document.getElementById('subscriptionPlanNameInput'), subscriptionAmountInput: document.getElementById('subscriptionAmountInput'), subscriptionCurrencyInput: document.getElementById('subscriptionCurrencyInput'), subscriptionIntervalCountInput: document.getElementById('subscriptionIntervalCountInput'), subscriptionIntervalInput: document.getElementById('subscriptionIntervalInput'), subscriptionStartDateInput: document.getElementById('subscriptionStartDateInput'), subscriptionAutoRenewInput: document.getElementById('subscriptionAutoRenewInput'), subscriptionNextRenewalInput: document.getElementById('subscriptionNextRenewalInput'), subscriptionNote: document.getElementById('subscriptionNote'), subscriptionOrphanNotice: document.getElementById('subscriptionOrphanNotice'), subscriptionOrphanText: document.getElementById('subscriptionOrphanText'), subscriptionOrphanAdopt: document.getElementById('subscriptionOrphanAdopt'), subscriptionOrphanDiscard: document.getElementById('subscriptionOrphanDiscard'), subscriptionSyncError: document.getElementById('subscriptionSyncError'), subscriptionNextRenewalLabel: document.getElementById('subscriptionNextRenewalLabel'), subscriptionNextRenewalNote: document.getElementById('subscriptionNextRenewalNote'), subscriptionSubmit: document.getElementById('subscriptionSubmit'), subscriptionCancelEdit: document.getElementById('subscriptionCancelEdit'), subscriptionTotalRow: document.getElementById('subscriptionTotalRow'), subscriptionErrorMessage: document.getElementById('subscriptionErrorMessage'), subscriptionPlanFields: document.getElementById('subscriptionPlanFields'), subscriptionTopUpFields: document.getElementById('subscriptionTopUpFields'), subscriptionTopUpList: document.getElementById('subscriptionTopUpList'), subscriptionTopUpDateInput: document.getElementById('subscriptionTopUpDateInput'), subscriptionTopUpAmountInput: document.getElementById('subscriptionTopUpAmountInput'), subscriptionTopUpAddButton: document.getElementById('subscriptionTopUpAddButton'), subscriptionAmountRow: document.getElementById('subscriptionAmountRow'), subscriptionTopUpHeadingRow: document.getElementById('subscriptionTopUpHeadingRow'), subscriptionKindInputs: [...document.querySelectorAll('input[name="subscriptionKind"]')]
  };
  Object.assign(els, {
-@@ -2825,23 +2826,68 @@ function toolRowsForPeriod(period) {
+@@ -3154,23 +3155,68 @@ function toolRowsForPeriod(period) {
    return deviceRowsForPeriod();
  }
  
@@ -1540,7 +1582,7 @@ index b3730d25..b517d4c9 100644
    if (modelRows.length > 0) {
      return usageAttributionRowsApi.rankRowsWithValues(modelRows, rankingMetric);
    }
-@@ -6580,6 +6626,8 @@ function render() {
+@@ -7190,6 +7236,8 @@ function render() {
    syncLiveTokenRateFooterState();
    renderSessionUsageArchiveStatus();
    ensureBreakdownVisible();
@@ -1549,7 +1591,7 @@ index b3730d25..b517d4c9 100644
    renderViewSwitcher();
    const derivedPeriod = fixedPeriodRangesApi.isDerived(state.period);
    if (derivedPeriod) {
-@@ -11901,6 +11949,12 @@ els.backHomeButton?.addEventListener('click', (event) => {
+@@ -12582,6 +12630,12 @@ els.backHomeButton?.addEventListener('click', (event) => {
    }
  });
  
@@ -1563,10 +1605,10 @@ index b3730d25..b517d4c9 100644
    cancelTokenRateBoost();
    clearViewSwitcherLongPress();
 diff --git a/src/electron/renderer/i18n.js b/src/electron/renderer/i18n.js
-index 8c708366..b6079d7b 100644
+index 54f5f42f..995d4e58 100644
 --- a/src/electron/renderer/i18n.js
 +++ b/src/electron/renderer/i18n.js
-@@ -514,6 +514,10 @@
+@@ -547,6 +547,10 @@
        'views.limits': 'Limits',
        'views.trends': 'Trends',
        'views.backHome': 'Back to Home',
@@ -1577,7 +1619,7 @@ index 8c708366..b6079d7b 100644
        'views.switcher.next': 'Next: {view}',
        'views.switcher.choose': 'Choose view',
        'home.limits': 'Limits',
-@@ -2358,6 +2362,10 @@
+@@ -2546,6 +2550,10 @@
        'views.limits': '額度',
        'views.trends': '趨勢',
        'views.backHome': '返回主頁',
@@ -1588,7 +1630,7 @@ index 8c708366..b6079d7b 100644
        'views.switcher.next': '下一個：{view}',
        'views.switcher.choose': '選擇視圖',
        'home.limits': '額度',
-@@ -4202,6 +4210,10 @@
+@@ -4545,6 +4553,10 @@
        'views.limits': '额度',
        'views.trends': '趋势',
        'views.backHome': '返回主页',
@@ -1599,7 +1641,7 @@ index 8c708366..b6079d7b 100644
        'views.switcher.next': '下一个：{view}',
        'views.switcher.choose': '选择视图',
        'home.limits': '额度',
-@@ -7387,6 +7399,10 @@
+@@ -8007,6 +8019,10 @@
        'views.session': '세션',
        'views.status': '상태',
        'views.backHome': '홈으로 돌아가기',
@@ -1610,7 +1652,7 @@ index 8c708366..b6079d7b 100644
        'views.switcher.choose': '보기 선택',
        'views.switcher.next': '다음: {view}',
        'views.tool': '도구',
-@@ -9231,6 +9247,10 @@
+@@ -10006,6 +10022,10 @@
        'views.session': 'セッション',
        'views.status': 'ステータス',
        'views.backHome': 'ホームに戻る',
@@ -1621,7 +1663,7 @@ index 8c708366..b6079d7b 100644
        'views.switcher.choose': 'ビューを選択',
        'views.switcher.next': '次: {view}',
        'views.tool': 'ツール',
-@@ -9734,6 +9754,10 @@
+@@ -10542,6 +10562,10 @@
        'views.limits': 'Limites',
        'views.trends': 'Tendências',
        'views.backHome': 'Voltar para a Home',
@@ -1633,10 +1675,10 @@ index 8c708366..b6079d7b 100644
        'views.switcher.choose': 'Escolher tela',
        'home.limits': 'Limites',
 diff --git a/src/electron/renderer/index.html b/src/electron/renderer/index.html
-index f5fb2e45..375d3a6c 100644
+index 7e284627..35559307 100644
 --- a/src/electron/renderer/index.html
 +++ b/src/electron/renderer/index.html
-@@ -1568,6 +1568,11 @@
+@@ -1652,6 +1652,11 @@
        <section id="fixedPeriodMessage" class="fixed-period-message hidden" role="status" aria-live="polite"></section>
  
        <section id="homePanel" class="home-panel hidden"></section>
@@ -1648,7 +1690,7 @@ index f5fb2e45..375d3a6c 100644
        <section id="breakdown" class="breakdown"></section>
        <div id="session-detail-head" class="detail-head hidden"></div>
        <div id="session-detail" class="session-detail hidden"></div>
-@@ -1698,6 +1703,7 @@
+@@ -1785,6 +1790,7 @@
      <script src="syncDevicePanel.js"></script>
      <script src="selectControl.js"></script>
      <script src="usageAttributionRows.js"></script>
@@ -1868,10 +1910,10 @@ index 00000000..15f2a984
 +  };
 +});
 diff --git a/src/electron/renderer/styles.css b/src/electron/renderer/styles.css
-index 2aa7bcc6..09b36dcc 100644
+index bad25601..9be9988e 100644
 --- a/src/electron/renderer/styles.css
 +++ b/src/electron/renderer/styles.css
-@@ -3440,6 +3440,45 @@ html.is-windows .settings-panel select option {
+@@ -3521,6 +3521,45 @@ html.is-windows .settings-panel select option {
    padding-right: 2px;
    scrollbar-width: none;
  }
@@ -1918,25 +1960,25 @@ index 2aa7bcc6..09b36dcc 100644
  .breakdown-incomplete-hint {
    margin: 0;
 diff --git a/src/shared/hubBuildRegistry.json b/src/shared/hubBuildRegistry.json
-index b9efa9ed..53f13048 100644
+index 886f0c06..21c4b77b 100644
 --- a/src/shared/hubBuildRegistry.json
 +++ b/src/shared/hubBuildRegistry.json
-@@ -301,6 +301,10 @@
+@@ -361,6 +361,10 @@
        {
-         "revision": 75,
-         "buildId": "sha256:6808386d1f1dd37caaf1640cbe41c3b9be803c8dfd5952bb3dbb009a6756e345"
+         "revision": 90,
+         "buildId": "sha256:8d5dee6a552a75ed98f34c61f7719ddac5082d1ddc74cf0b2fed78fb8b48a159"
 +      },
 +      {
-+        "revision": 76,
-+        "buildId": "sha256:1e2e9d16278aeda611e6653a11ad05fa76e35816c15c33c8de638b6d77906840"
++        "revision": 91,
++        "buildId": "sha256:0798135f6296be157854fb4453e43838f659a4e7fc5f9bded0b09b7be7904f29"
        }
      ],
      "node-hub": [
 diff --git a/src/shared/usage.js b/src/shared/usage.js
-index 86fc34c9..74582a09 100644
+index da5ded89..d8854331 100644
 --- a/src/shared/usage.js
 +++ b/src/shared/usage.js
-@@ -222,6 +222,16 @@ function emptyPeriod() {
+@@ -276,6 +276,16 @@ function emptyPeriod() {
      modelUnclassifiedTokens: {},
      clientModels: {},
      clientModelCosts: {},
@@ -1953,7 +1995,7 @@ index 86fc34c9..74582a09 100644
      projects: Object.create(null),
      sessions: {}
    };
-@@ -296,7 +306,12 @@ function normalizeSessionId(value) {
+@@ -352,7 +362,12 @@ function normalizeSessionId(value) {
  }
  
  function normalizeProviderName(value) {
@@ -1967,7 +2009,7 @@ index 86fc34c9..74582a09 100644
    return raw.replace(/[^a-z0-9_-]+/g, '-') || null;
  }
  
-@@ -803,6 +818,26 @@ function reconcileCursorAutoGlobalModels(period, input) {
+@@ -909,6 +924,26 @@ function reconcileCursorAutoGlobalModels(period, input) {
      period.models[raw] = available - moved;
      if (period.models[raw] === 0) delete period.models[raw];
      period.models['cursor-auto'] = (period.models['cursor-auto'] || 0) + moved;
@@ -1994,7 +2036,7 @@ index 86fc34c9..74582a09 100644
      if (exclusive) {
        for (const key of [
          'modelCacheReads',
-@@ -990,6 +1025,31 @@ function normalizePeriod(input, options = {}) {
+@@ -1096,6 +1131,31 @@ function normalizePeriod(input, options = {}) {
        }
      }
    }
@@ -2026,7 +2068,7 @@ index 86fc34c9..74582a09 100644
    reconcileCursorAutoGlobalModels(period, input);
    if (input.sessions && typeof input.sessions === 'object') {
      for (const [key, value] of Object.entries(input.sessions)) {
-@@ -1114,6 +1174,25 @@ function addUsageRowToPeriod(period, row, detectedClient = detectClient(row)) {
+@@ -1225,6 +1285,25 @@ function addUsageRowToPeriod(period, row, detectedClient = detectClient(row)) {
      if (!period.clientModelCosts[client]) period.clientModelCosts[client] = {};
      period.clientModelCosts[client][model] = (period.clientModelCosts[client][model] || 0) + cost;
    }
@@ -2052,7 +2094,7 @@ index 86fc34c9..74582a09 100644
    const session = sessionFromRow(row);
    if (session) addSession(period, session);
  }
-@@ -1681,6 +1760,24 @@ function addPeriodInto(target, source) {
+@@ -1792,6 +1871,24 @@ function addPeriodInto(target, source) {
        target.clientModelCosts[client][model] = (target.clientModelCosts[client][model] || 0) + cost;
      }
    }
@@ -2101,10 +2143,10 @@ index 41976abb..71e7c235 100644
        const recover = createMacWidgetLaunchServicesRecovery({
          execFile: () => { launches += 1; }
 diff --git a/tests/electron/modelAliasPresentation.test.js b/tests/electron/modelAliasPresentation.test.js
-index 1b10c419..b2f597ce 100644
+index 97dba83b..0aa1b11d 100644
 --- a/tests/electron/modelAliasPresentation.test.js
 +++ b/tests/electron/modelAliasPresentation.test.js
-@@ -244,3 +244,57 @@ test('an alias that matches nothing in the payload copies no part of the stats t
+@@ -299,3 +299,57 @@ test('an alias that matches nothing in the payload copies no part of the stats t
    assert.deepEqual(projected.modelAliasSourceIds, ['gpt-5.5-pro']);
    assert.ok(projected.historyRevision.startsWith('raw:aliases:'));
  });
@@ -2288,7 +2330,7 @@ index 00000000..ba751b03
 +  assert.deepEqual(rowsForMode(period, 'nonsense'), mixedModelRows(period));
 +});
 diff --git a/tests/helpers/sourceEnv.js b/tests/helpers/sourceEnv.js
-index c3fefdd7..68c5619b 100644
+index 3beb835d..6bf257a7 100644
 --- a/tests/helpers/sourceEnv.js
 +++ b/tests/helpers/sourceEnv.js
 @@ -17,6 +17,12 @@ const SOURCE_ENV_KEYS = Object.freeze([
@@ -2304,9 +2346,9 @@ index c3fefdd7..68c5619b 100644
    'XDG_DATA_HOME',
    'COPILOT_OTEL_FILE_EXPORTER_PATH',
    'CODEX_HOME',
-@@ -28,7 +34,12 @@ const SOURCE_ENV_KEYS = Object.freeze([
-   'KIMI_CODE_HOME',
-   'GEMINI_CLI_HOME',
+@@ -31,7 +37,12 @@ const SOURCE_ENV_KEYS = Object.freeze([
+   'ANTIGRAVITY_HOME',
+   'ANTIGRAVITY_DATA_DIR',
    'HERMES_HOME',
 -  'UNSLOTH_STUDIO_HOME'
 +  'UNSLOTH_STUDIO_HOME',
@@ -2346,7 +2388,7 @@ index ac2d4de2..d32f5f0f 100644
    }
  });
 diff --git a/tests/shared/collectorSessionTimestamps.test.js b/tests/shared/collectorSessionTimestamps.test.js
-index e2f850f0..c9e07301 100644
+index 00064206..bb9687a2 100644
 --- a/tests/shared/collectorSessionTimestamps.test.js
 +++ b/tests/shared/collectorSessionTimestamps.test.js
 @@ -9,6 +9,9 @@ const test = require('node:test');
@@ -2404,7 +2446,7 @@ index 2353e1e9..2c73295c 100644
    decodeFirstFrameText,
    decodeSessionText,
 diff --git a/tests/shared/usage.test.js b/tests/shared/usage.test.js
-index 2f4c0373..e76e531d 100644
+index 611af2f7..1e97e948 100644
 --- a/tests/shared/usage.test.js
 +++ b/tests/shared/usage.test.js
 @@ -5,6 +5,7 @@ const test = require('node:test');
@@ -2415,7 +2457,7 @@ index 2f4c0373..e76e531d 100644
    extractUsageBundleFromTokscale,
    extractUsageFromTokscale,
    mergeDeviceRecord,
-@@ -1755,3 +1756,81 @@ test('aggregateDevices folds a pre-rename micode device into the mimo row', () =
+@@ -1800,3 +1801,81 @@ test('aggregateDevices folds a pre-rename micode device into the mimo row', () =
    assert.equal(aggregate.periods.today.clients.micode, undefined);
    assert.equal(aggregate.periods.today.clientCosts.mimo, 2);
  });
@@ -2498,25 +2540,25 @@ index 2f4c0373..e76e531d 100644
 +  assert.equal(record.periods.allTime.modelProviders.m.kala.tokens, 20);
 +});
 diff --git a/worker/src/shared/hubBuildRegistry.json b/worker/src/shared/hubBuildRegistry.json
-index b9efa9ed..53f13048 100644
+index 886f0c06..21c4b77b 100644
 --- a/worker/src/shared/hubBuildRegistry.json
 +++ b/worker/src/shared/hubBuildRegistry.json
-@@ -301,6 +301,10 @@
+@@ -361,6 +361,10 @@
        {
-         "revision": 75,
-         "buildId": "sha256:6808386d1f1dd37caaf1640cbe41c3b9be803c8dfd5952bb3dbb009a6756e345"
+         "revision": 90,
+         "buildId": "sha256:8d5dee6a552a75ed98f34c61f7719ddac5082d1ddc74cf0b2fed78fb8b48a159"
 +      },
 +      {
-+        "revision": 76,
-+        "buildId": "sha256:1e2e9d16278aeda611e6653a11ad05fa76e35816c15c33c8de638b6d77906840"
++        "revision": 91,
++        "buildId": "sha256:0798135f6296be157854fb4453e43838f659a4e7fc5f9bded0b09b7be7904f29"
        }
      ],
      "node-hub": [
 diff --git a/worker/src/shared/usage.js b/worker/src/shared/usage.js
-index 1b832426..f6831491 100644
+index ca0e7a91..e38e1613 100644
 --- a/worker/src/shared/usage.js
 +++ b/worker/src/shared/usage.js
-@@ -225,6 +225,16 @@ function emptyPeriod() {
+@@ -279,6 +279,16 @@ function emptyPeriod() {
      modelUnclassifiedTokens: {},
      clientModels: {},
      clientModelCosts: {},
@@ -2533,7 +2575,7 @@ index 1b832426..f6831491 100644
      projects: Object.create(null),
      sessions: {}
    };
-@@ -299,7 +309,12 @@ function normalizeSessionId(value) {
+@@ -355,7 +365,12 @@ function normalizeSessionId(value) {
  }
  
  function normalizeProviderName(value) {
@@ -2547,7 +2589,7 @@ index 1b832426..f6831491 100644
    return raw.replace(/[^a-z0-9_-]+/g, '-') || null;
  }
  
-@@ -806,6 +821,26 @@ function reconcileCursorAutoGlobalModels(period, input) {
+@@ -912,6 +927,26 @@ function reconcileCursorAutoGlobalModels(period, input) {
      period.models[raw] = available - moved;
      if (period.models[raw] === 0) delete period.models[raw];
      period.models['cursor-auto'] = (period.models['cursor-auto'] || 0) + moved;
@@ -2574,7 +2616,7 @@ index 1b832426..f6831491 100644
      if (exclusive) {
        for (const key of [
          'modelCacheReads',
-@@ -993,6 +1028,31 @@ function normalizePeriod(input, options = {}) {
+@@ -1099,6 +1134,31 @@ function normalizePeriod(input, options = {}) {
        }
      }
    }
@@ -2606,7 +2648,7 @@ index 1b832426..f6831491 100644
    reconcileCursorAutoGlobalModels(period, input);
    if (input.sessions && typeof input.sessions === 'object') {
      for (const [key, value] of Object.entries(input.sessions)) {
-@@ -1117,6 +1177,25 @@ function addUsageRowToPeriod(period, row, detectedClient = detectClient(row)) {
+@@ -1228,6 +1288,25 @@ function addUsageRowToPeriod(period, row, detectedClient = detectClient(row)) {
      if (!period.clientModelCosts[client]) period.clientModelCosts[client] = {};
      period.clientModelCosts[client][model] = (period.clientModelCosts[client][model] || 0) + cost;
    }
@@ -2632,7 +2674,7 @@ index 1b832426..f6831491 100644
    const session = sessionFromRow(row);
    if (session) addSession(period, session);
  }
-@@ -1684,6 +1763,24 @@ function addPeriodInto(target, source) {
+@@ -1795,6 +1874,24 @@ function addPeriodInto(target, source) {
        target.clientModelCosts[client][model] = (target.clientModelCosts[client][model] || 0) + cost;
      }
    }
