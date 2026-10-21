@@ -1,3 +1,16 @@
+diff --git a/.gitattributes b/.gitattributes
+index 7931d83c..df5b4806 100644
+--- a/.gitattributes
++++ b/.gitattributes
+@@ -3,3 +3,8 @@
+ # against source-file content — regexes with hardcoded \n — fail. text=auto
+ # lets git keep detected binaries (icons, tokscale binaries) untouched.
+ * text=auto eol=lf
++
++# cmd.exe parses batch files line by line and its handling of LF-only input
++# is not reliable around goto labels and multi-line blocks, so keep them CRLF
++# even though everything else in the tree is normalised to LF.
++*.bat text eol=crlf
 diff --git a/AGENTS.md b/AGENTS.md
 index aaeb9154..217a777b 100644
 --- a/AGENTS.md
@@ -12,14 +25,14 @@ index aaeb9154..217a777b 100644
  | adding or renaming a tracked client | [Tracked-client checklist](docs/providers/README.md#adding-a-tracked-client), including its partition invariants |
 diff --git a/docs/CHANGES-LOCAL.zh-CN.md b/docs/CHANGES-LOCAL.zh-CN.md
 new file mode 100644
-index 00000000..11cb8da8
+index 00000000..701e261e
 --- /dev/null
 +++ b/docs/CHANGES-LOCAL.zh-CN.md
-@@ -0,0 +1,226 @@
+@@ -0,0 +1,249 @@
 +# 本地修改记录（Local Modifications）
 +
 +> 基线：上游 `ce26462f`（token-monitor v0.76.0）。全部修改已提交至自用 fork `youxiya/token-monitor`（`origin`=自用 fork，`upstream`=上游 Javis603；上游更新时 `git fetch upstream` 后 `git rebase upstream/main`）。
-+> 首次记录：2026-09-29（基线 `052667e` / v0.63.1）。最近更新：2026-10-21（rebase 到 v0.76.0，见第十节）。
++> 首次记录：2026-09-29（基线 `052667e` / v0.63.1）。最近更新：2026-10-21（rebase 到 v0.76.0，见第十节；Windows 打包脚本入库，见第十一节）。
 +> 机器可回放补丁：[`docs/CHANGES-LOCAL.patch`](CHANGES-LOCAL.patch)（供应用到**上游干净基线**；`git apply` 应用，`git apply -R` 撤销）。
 +> 项目导航文档：[`docs/PROJECT_MAP.zh-CN.md`](PROJECT_MAP.zh-CN.md)。
 +
@@ -125,26 +138,26 @@ index 00000000..11cb8da8
 +
 +## 七、Windows 打包（exe 安装包 + 绿色版）
 +
-+产物（`npm run dist:win` 的两个 target）：
++产物（`npm run dist:win` 的两个 target，文件名带版本号）：
 +
-+- **安装包**：`dist/Token-Monitor-Setup-0.63.1.exe`（NSIS，per-user 安装，无需管理员）
-+- **绿色版**：`dist/Token-Monitor-0.63.1.exe`（portable，单文件免安装）
++- **安装包**：`dist/Token-Monitor-Setup-<version>.exe`（NSIS，per-user 安装，无需管理员）
++- **绿色版**：`dist/Token-Monitor-<version>.exe`（portable，单文件免安装）
 +
-+本机网络下的可复现构建步骤（绕开 GitHub 直连不稳定）：
++本机打包走 `scripts/build-win-local.bat`（2026-10-21 起入库），它是绕开 GitHub 直连不稳定的一层封装，见第十一节。底层的手工步骤留档备查：
 +
 +1. **预置 electron-builder 工具缓存**（npmmirror 镜像 + curl 下载，落到 `%LOCALAPPDATA%\electron-builder\Cache\<releaseName>\<file>`，electron-builder 检测到 archive 缓存即跳过联网；sha256 已与 `app-builder-lib/out/toolsets/*.js` 内的常量核对）：
 +   - `7zip@1.0.0/7zip-win-x64.tar.gz`
 +   - `winCodeSign-2.6.0/winCodeSign-2.6.0.7z`
 +   - `nsis-3.0.4.1/nsis-3.0.4.1.7z`
 +   - `nsis-resources-3.4.1/nsis-resources-3.4.1.7z`
-+2. **复用本地 electron**（避免再次下载 144MB zip）：构建命令加 `--config.electronDist=node_modules/electron/dist --config.electronVersion=43.4.0`
-+3. 完整命令：
++2. **复用本地 electron**（避免再次下载 144MB zip）：构建命令加 `--config.electronDist=node_modules/electron/dist --config.electronVersion=<本地已装版本>`
++3. 完整命令（脚本内部就是这些环境变量 + 这条命令）：
 +   ```bash
 +   NODE_USE_SYSTEM_CA=1 \
 +   ELECTRON_MIRROR="https://npmmirror.com/mirrors/electron/" \
 +   ELECTRON_BUILDER_BINARIES_MIRROR="https://npmmirror.com/mirrors/electron-builder-binaries/" \
 +   npx electron-builder --win --x64 --publish never \
-+     --config.electronDist=node_modules/electron/dist --config.electronVersion=43.4.0
++     --config.electronDist=node_modules/electron/dist --config.electronVersion=<本地已装版本>
 +   ```
 +4. 本地产物未签名（正式签名在 CI 的 SignPath 步骤）：安装/首次运行时 SmartScreen 会提示，选"更多信息 → 仍要运行"。
 +5. 打包产物已验证：`app.asar` 内含新功能代码（`modelProviders`×22、`modelBreakdownRows`×5），win-unpacked 版启动冒烟通过（collector 正常监控 11 个客户端目录）。
@@ -242,6 +255,29 @@ index 00000000..11cb8da8
 +| `tests/shared/usageHost.test.js` "a subprocess on the worker does not outlive a process that exits right after stopping it" | 只在全量并行跑时出现（退出码 `3221225477` = `0xC0000005` 访问违例）；单独跑该文件时本地与上游**都通过**，属并行下的偶发 |
 +
 +> 前两个失败都不需要动代码：前者要改测试「如何退出」才能过，那会改变它验证的东西；后者只需把 `node_modules` 刷到 `@tokscale/cli` 4.20.0。两者都留待单独处理。
++
++## 十一、2026-10-21：Windows 打包脚本入库，并补两道产物校验
++
++### 11.1 为什么之前没入库
++
++`scripts/build-win-local.bat` 之前是未跟踪文件。脚本本身写得没问题，但留在工作树里有两个后果：一是仓库一换就丢；二是它引用了本记录第七节，而第七节描述的却是 0.63.1 时期的手工步骤 —— 文档与脚本各说各话。
++
++### 11.2 补的两道校验
++
++原脚本只负责"把 electron-builder 跑通"，产物对不对全靠人看 `dir dist\*.exe` 的日期列。补上两道自动校验：
++
++| 位置 | 校验 | 为什么 |
++|---|---|---|
++| 构建前 | `node scripts/update-hub-build.js --check` | `src/hub` 与 `src/shared` 都进包，hub build marker 陈旧就会把过期的 Hub build identity 发给 widget。AGENTS.md 要求"最后一次 Hub/shared 改动后跑一次 `npm run update:hub-build`"，但**检查**比刷新更安全 —— 脚本绝不写工作树，陈旧就中止，让人去跑更新并提交 |
++| 构建后 | 断言 `dist\Token-Monitor-Setup-<version>.exe` 与 `dist\Token-Monitor-<version>.exe` 存在，再跑 `npm run verify:release-artifact-names` | `dist\` 里的旧版本产物不会被清理，"构建结束"不等于"该发的文件在"。第一条挡住拿错版本，第二条用仓库自带的校验器确认 `latest.yml` 引用的产物确实在盘上 |
++
++为此给 `scripts/update-hub-build.js` 加了 `--check`：默认行为（无参数）完全不变，仍然追加 revision 并退出 0；带 `--check` 时只在陈旧时退出 1 且**不写文件**。
++
++### 11.3 实测
++
++- `--check` 两条分支都验过：陈旧 → 退出 1 并打印指引；最新 → 退出 0。制造漂移的方式是给 `src/shared/projectKey.js` 临时加一行，验完用 `git checkout --` 精确还原。
++- 脚本整体实跑：前置检查、版本探测（app 0.76.0 / electron 43.7.9）、新的 marker 闸门、以及各失败路径的输出都正确。把 marker 弄陈旧后重跑，在**构建开始前**就中止并给出可执行指引，工作树未被改动。
++- 本机仍停在 `ensure:tokscale`：装的 `@tokscale/cli` 是 4.18.0，而上游已把 `scripts/vendor/tokscale.json` 的 `baseVersion` 提到 4.20.0，override 模式按清单自己的规则拒绝替换。**这与本次改动无关** —— 该步骤是原样保留的，且它与第十节记的 `verifyVendoredTokscaleRelease` 失败同源（`node_modules` 落后于上游）。要真正跑完构建，得先把 `node_modules` 刷到 `@tokscale/cli` 4.20.0。
 diff --git a/docs/NETWORK-SETUP.zh-CN.md b/docs/NETWORK-SETUP.zh-CN.md
 new file mode 100644
 index 00000000..e1682e9c
@@ -1380,6 +1416,243 @@ index 00000000..a8aec2b1
 +4. **要某个特定客户端的深读**（标题/项目/详情）：抄 §5 对应条目 + token-monitor 的 `providers/<id>/` 适配器（多为有界读取 + 缓存 + 活跃窗门控）。
 +5. **要多设备聚合**：wire record 形状见 `docs/API.md`（periods 五桶 + clientStatus + periodWindows 过期冻结 + stale 灰显），Hub 归一化在 `normalizeDeviceRecord`（未知枚举降级 unknown、计数封顶、原型敏感键拒收）。
 +6. **测试**：数据源测试要清空 `HOME/USERPROFILE/APPDATA/LOCALAPPDATA/XDG_*/<各客户端 HOME env>`（真机泄漏会让正确实现红测，见 token-monitor `tests/helpers/sourceEnv.js`）；时区敏感断言用本地日历分量构造时间戳。
+diff --git a/scripts/build-win-local.bat b/scripts/build-win-local.bat
+new file mode 100644
+index 00000000..82d589ea
+--- /dev/null
++++ b/scripts/build-win-local.bat
+@@ -0,0 +1,214 @@
++@echo off
++REM ============================================================================
++REM  Token Monitor - local Windows packaging (installer + portable)
++REM
++REM  Produces both artifacts into dist\ :
++REM    - NSIS installer       Token-Monitor-Setup-<version>.exe
++REM    - portable single exe  Token-Monitor-<version>.exe
++REM
++REM  This is the machine-specific wrapper documented in
++REM  docs\CHANGES-LOCAL.zh-CN.md section 7. The portable path exists because
++REM  this host cannot reach github.com reliably: the electron zip and the
++REM  electron-builder tools are served from the npmmirror images, the already
++REM  installed electron is reused instead of downloaded again, and Node is told
++REM  to trust the Windows certificate store, because a local proxy may terminate
++REM  TLS with a self-signed CA that Node does not read by default.
++REM
++REM  Three deliberate constraints, all learned the hard way:
++REM    - Messages are ASCII. cmd.exe renders a UTF-8 batch file as mojibake on
++REM      many Chinese Windows installs, and an unreadable build log is worse
++REM      than an English one.
++REM    - No multi-line "( ... )" block wraps an echo. An unescaped parenthesis
++REM      inside one - even a balanced "electron (pkg)" - closes the block early
++REM      and cmd then tries to execute the remainder, failing the build with a
++REM      message that points nowhere near the real line. Conditionals below use
++REM      goto instead, which cannot be broken that way.
++REM    - The working tree is never written to. The Hub build marker is checked,
++REM      not refreshed, so a stale marker fails the build instead of quietly
++REM      changing what ends up inside the package.
++REM
++REM  Usage:  scripts\build-win-local.bat
++REM ============================================================================
++setlocal
++
++cd /d "%~dp0.."
++
++set "ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/"
++set "ELECTRON_BUILDER_BINARIES_MIRROR=https://npmmirror.com/mirrors/electron-builder-binaries/"
++set "NODE_USE_SYSTEM_CA=1"
++
++echo =============================================================
++echo  Token Monitor - local Windows packaging
++echo  repo: %CD%
++echo =============================================================
++echo.
++
++REM --- 1. preconditions ------------------------------------------------------
++where node >nul 2>&1
++if errorlevel 1 goto :no_node
++if not exist "node_modules\.bin\electron-builder.cmd" goto :no_modules
++if not exist "scripts\vendor\tokscale.json" goto :no_manifest
++
++REM electron's own postinstall downloads a ~110MB zip from GitHub, which this
++REM host cannot reach, so a plain "npm ci" leaves node_modules/electron without
++REM a dist directory. ELECTRON_MIRROR is already set above, so re-running that
++REM installer here repairs it instead of failing the build. @electron/get
++REM verifies the zip against the package's own checksums.json, so routing it
++REM through a mirror is not a trust decision.
++if exist "node_modules\electron\dist\electron.exe" goto :electron_ready
++echo [setup] node_modules\electron\dist is missing - running its installer.
++echo         A plain "npm ci" could not fetch the zip from GitHub.
++echo.
++node "node_modules\electron\install.js"
++if errorlevel 1 goto :no_electron
++if not exist "node_modules\electron\dist\electron.exe" goto :no_electron
++echo.
++
++:electron_ready
++for /f "usebackq delims=" %%v in (`node -p "require('./node_modules/electron/package.json').version"`) do set "ELECTRON_VERSION=%%v"
++for /f "usebackq delims=" %%v in (`node -p "String(require('./package.json').devDependencies.electron||'').replace(/^[\^~>=<\s]+/,'')"`) do set "DECLARED_VERSION=%%v"
++for /f "usebackq delims=" %%v in (`node -p "require('./package.json').version"`) do set "APP_VERSION=%%v"
++
++if not defined ELECTRON_VERSION goto :no_electron
++if not defined APP_VERSION goto :no_electron
++
++echo   app version      : %APP_VERSION%
++echo   electron local   : %ELECTRON_VERSION%
++if "%DECLARED_VERSION%"=="" goto :versions_ok
++if "%DECLARED_VERSION%"=="%ELECTRON_VERSION%" goto :versions_ok
++echo   electron declared: %DECLARED_VERSION%   MISMATCH
++echo                      The installed copy is what gets packaged, so this
++echo                      build will use %ELECTRON_VERSION%. Run npm ci to resync.
++:versions_ok
++echo.
++
++REM --- 2. hub build marker ---------------------------------------------------
++REM src/hub and src/shared are packaged, so a stale build identity ships an
++REM outdated Hub to the widget. The registry has to be current before the build
++REM starts; this script only reports, it never appends a revision - see
++REM AGENTS.md, "Hub build marker".
++echo [1/3] Checking the Hub build marker ...
++echo       src/hub and src/shared are packaged, so a stale build identity would
++echo       ship an outdated Hub to the widget. The marker has to be current
++echo       before the build starts; this step only reports, it never writes.
++echo.
++node scripts\update-hub-build.js --check
++if errorlevel 1 goto :hub_build_stale
++echo.
++
++REM --- 3. vendored tokscale binary ------------------------------------------
++echo [2/3] Vendoring the tokscale binary ...
++echo       scripts/vendor/tokscale.json pins a fork build that npm does not
++echo       publish, so this step downloads and swaps it in. It is a no-op once
++echo       the pinned build is already in place.
++echo.
++call npm run ensure:tokscale -- --platform=win32-x64
++if errorlevel 1 goto :tokscale_failed
++echo.
++
++REM --- 4. build ---------------------------------------------------------------
++echo [3/3] Building NSIS installer + portable exe ...
++echo       reusing node_modules\electron\dist, no electron download.
++echo.
++call "node_modules\.bin\electron-builder.cmd" --win --x64 --publish never --config.electronDist="%CD%\node_modules\electron\dist" --config.electronVersion=%ELECTRON_VERSION%
++if errorlevel 1 goto :build_failed
++
++REM --- 5. verify the artifacts ------------------------------------------------
++REM dist\ keeps artifacts from older versions, so "the build finished" is not
++REM the same as "the right files are there". Check the current version's pair
++REM exists, then let the repo's own verifier confirm the updater metadata
++REM points at artifacts that are actually on disk.
++echo.
++echo [done] Verifying the artifacts ...
++echo.
++if not exist "dist\Token-Monitor-Setup-%APP_VERSION%.exe" goto :missing_installer
++if not exist "dist\Token-Monitor-%APP_VERSION%.exe" goto :missing_portable
++echo   installer : dist\Token-Monitor-Setup-%APP_VERSION%.exe
++echo   portable  : dist\Token-Monitor-%APP_VERSION%.exe
++echo.
++call npm run verify:release-artifact-names
++if errorlevel 1 goto :artifact_check_failed
++echo.
++
++echo =============================================================
++echo  Done. Artifacts in %CD%\dist
++echo =============================================================
++dir /o-d "dist\*.exe"
++echo.
++echo   Artifacts from older versions are not removed. Check the date
++echo   column before shipping one.
++echo.
++echo   These builds are NOT signed; official signing happens in CI.
++echo   Windows SmartScreen will warn on first run: choose
++echo   "More info" then "Run anyway".
++echo.
++endlocal
++exit /b 0
++
++REM --- failure paths ---------------------------------------------------------
++:no_node
++echo [FAIL] node is not on PATH. Install Node 22.15+ and reopen this window.
++endlocal & exit /b 1
++
++:no_modules
++echo [FAIL] node_modules is missing or incomplete.
++echo        Run from the repo root:  npm ci
++echo        See docs\NETWORK-SETUP.zh-CN.md if the download fails.
++endlocal & exit /b 1
++
++:no_electron
++echo [FAIL] node_modules\electron\dist\electron.exe is missing.
++echo        This script already retried electron's own installer through
++echo        ELECTRON_MIRROR, so the mirror is unreachable too:
++echo          https://npmmirror.com/mirrors/electron/
++echo        See docs\NETWORK-SETUP.zh-CN.md for this host's network route.
++endlocal & exit /b 1
++
++:no_manifest
++echo [FAIL] scripts\vendor\tokscale.json is missing. Run this from the repo.
++endlocal & exit /b 1
++
++:hub_build_stale
++echo.
++echo [FAIL] The Hub build registry is stale.
++echo        Run  npm run update:hub-build  and commit the result, then build
++echo        again. Packaging a stale marker ships an outdated Hub build
++echo        identity to the widget.
++endlocal & exit /b 1
++
++:tokscale_failed
++echo.
++echo [FAIL] ensure:tokscale did not complete.
++echo        In override mode it downloads a fork build from a GitHub
++echo        release, and github.com is not reachable from here without the
++echo        proxy described in docs\NETWORK-SETUP.zh-CN.md.
++echo        Everything up to this point is reusable; only this step and the
++echo        build need the network.
++endlocal & exit /b 1
++
++:build_failed
++echo.
++echo [FAIL] electron-builder exited with an error. See the log above.
++echo        The usual cause on this host is a tool-cache miss for 7zip,
++echo        winCodeSign or nsis; see docs\CHANGES-LOCAL.zh-CN.md.
++endlocal & exit /b 1
++
++:missing_installer
++echo.
++echo [FAIL] dist\Token-Monitor-Setup-%APP_VERSION%.exe is missing.
++echo        The build did not produce the NSIS installer for this version.
++echo        Older artifacts stay in dist\ - check the build log above.
++endlocal & exit /b 1
++
++:missing_portable
++echo.
++echo [FAIL] dist\Token-Monitor-%APP_VERSION%.exe is missing.
++echo        The build did not produce the portable executable for this version.
++echo        Older artifacts stay in dist\ - check the build log above.
++endlocal & exit /b 1
++
++:artifact_check_failed
++echo.
++echo [FAIL] The updater metadata does not match the built artifacts.
++echo        See the message above.
++endlocal & exit /b 1
+diff --git a/scripts/update-hub-build.js b/scripts/update-hub-build.js
+index 3164f1e8..592accae 100644
+--- a/scripts/update-hub-build.js
++++ b/scripts/update-hub-build.js
+@@ -17,5 +17,12 @@ if (JSON.stringify(previous) === JSON.stringify(next)) {
+   process.exit(0);
+ }
+ 
++// `--check` reports a stale registry without touching the tree, so a packaging
++// step can fail fast instead of shipping an outdated Hub build identity.
++if (process.argv.includes('--check')) {
++  console.error('Hub build registry is stale. Run `npm run update:hub-build` and commit the result.');
++  process.exit(1);
++}
++
+ fs.writeFileSync(REGISTRY_PATH, `${JSON.stringify(next, null, 2)}\n`);
+ console.log('Updated Hub build registry. Run npm run sync:worker to copy it into worker/.');
 diff --git a/src/electron/main.js b/src/electron/main.js
 index c925383e..27fee271 100644
 --- a/src/electron/main.js

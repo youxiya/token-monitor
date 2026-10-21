@@ -1,7 +1,7 @@
 # 本地修改记录（Local Modifications）
 
 > 基线：上游 `ce26462f`（token-monitor v0.76.0）。全部修改已提交至自用 fork `youxiya/token-monitor`（`origin`=自用 fork，`upstream`=上游 Javis603；上游更新时 `git fetch upstream` 后 `git rebase upstream/main`）。
-> 首次记录：2026-09-29（基线 `052667e` / v0.63.1）。最近更新：2026-10-21（rebase 到 v0.76.0，见第十节）。
+> 首次记录：2026-09-29（基线 `052667e` / v0.63.1）。最近更新：2026-10-21（rebase 到 v0.76.0，见第十节；Windows 打包脚本入库，见第十一节）。
 > 机器可回放补丁：[`docs/CHANGES-LOCAL.patch`](CHANGES-LOCAL.patch)（供应用到**上游干净基线**；`git apply` 应用，`git apply -R` 撤销）。
 > 项目导航文档：[`docs/PROJECT_MAP.zh-CN.md`](PROJECT_MAP.zh-CN.md)。
 
@@ -107,26 +107,26 @@ git apply -R docs/CHANGES-LOCAL.patch
 
 ## 七、Windows 打包（exe 安装包 + 绿色版）
 
-产物（`npm run dist:win` 的两个 target）：
+产物（`npm run dist:win` 的两个 target，文件名带版本号）：
 
-- **安装包**：`dist/Token-Monitor-Setup-0.63.1.exe`（NSIS，per-user 安装，无需管理员）
-- **绿色版**：`dist/Token-Monitor-0.63.1.exe`（portable，单文件免安装）
+- **安装包**：`dist/Token-Monitor-Setup-<version>.exe`（NSIS，per-user 安装，无需管理员）
+- **绿色版**：`dist/Token-Monitor-<version>.exe`（portable，单文件免安装）
 
-本机网络下的可复现构建步骤（绕开 GitHub 直连不稳定）：
+本机打包走 `scripts/build-win-local.bat`（2026-10-21 起入库），它是绕开 GitHub 直连不稳定的一层封装，见第十一节。底层的手工步骤留档备查：
 
 1. **预置 electron-builder 工具缓存**（npmmirror 镜像 + curl 下载，落到 `%LOCALAPPDATA%\electron-builder\Cache\<releaseName>\<file>`，electron-builder 检测到 archive 缓存即跳过联网；sha256 已与 `app-builder-lib/out/toolsets/*.js` 内的常量核对）：
    - `7zip@1.0.0/7zip-win-x64.tar.gz`
    - `winCodeSign-2.6.0/winCodeSign-2.6.0.7z`
    - `nsis-3.0.4.1/nsis-3.0.4.1.7z`
    - `nsis-resources-3.4.1/nsis-resources-3.4.1.7z`
-2. **复用本地 electron**（避免再次下载 144MB zip）：构建命令加 `--config.electronDist=node_modules/electron/dist --config.electronVersion=43.4.0`
-3. 完整命令：
+2. **复用本地 electron**（避免再次下载 144MB zip）：构建命令加 `--config.electronDist=node_modules/electron/dist --config.electronVersion=<本地已装版本>`
+3. 完整命令（脚本内部就是这些环境变量 + 这条命令）：
    ```bash
    NODE_USE_SYSTEM_CA=1 \
    ELECTRON_MIRROR="https://npmmirror.com/mirrors/electron/" \
    ELECTRON_BUILDER_BINARIES_MIRROR="https://npmmirror.com/mirrors/electron-builder-binaries/" \
    npx electron-builder --win --x64 --publish never \
-     --config.electronDist=node_modules/electron/dist --config.electronVersion=43.4.0
+     --config.electronDist=node_modules/electron/dist --config.electronVersion=<本地已装版本>
    ```
 4. 本地产物未签名（正式签名在 CI 的 SignPath 步骤）：安装/首次运行时 SmartScreen 会提示，选"更多信息 → 仍要运行"。
 5. 打包产物已验证：`app.asar` 内含新功能代码（`modelProviders`×22、`modelBreakdownRows`×5），win-unpacked 版启动冒烟通过（collector 正常监控 11 个客户端目录）。
@@ -224,3 +224,26 @@ rebase 后 `git diff upstream/main main` = **27 文件 / +4854 / −21**，与 r
 | `tests/shared/usageHost.test.js` "a subprocess on the worker does not outlive a process that exits right after stopping it" | 只在全量并行跑时出现（退出码 `3221225477` = `0xC0000005` 访问违例）；单独跑该文件时本地与上游**都通过**，属并行下的偶发 |
 
 > 前两个失败都不需要动代码：前者要改测试「如何退出」才能过，那会改变它验证的东西；后者只需把 `node_modules` 刷到 `@tokscale/cli` 4.20.0。两者都留待单独处理。
+
+## 十一、2026-10-21：Windows 打包脚本入库，并补两道产物校验
+
+### 11.1 为什么之前没入库
+
+`scripts/build-win-local.bat` 之前是未跟踪文件。脚本本身写得没问题，但留在工作树里有两个后果：一是仓库一换就丢；二是它引用了本记录第七节，而第七节描述的却是 0.63.1 时期的手工步骤 —— 文档与脚本各说各话。
+
+### 11.2 补的两道校验
+
+原脚本只负责"把 electron-builder 跑通"，产物对不对全靠人看 `dir dist\*.exe` 的日期列。补上两道自动校验：
+
+| 位置 | 校验 | 为什么 |
+|---|---|---|
+| 构建前 | `node scripts/update-hub-build.js --check` | `src/hub` 与 `src/shared` 都进包，hub build marker 陈旧就会把过期的 Hub build identity 发给 widget。AGENTS.md 要求"最后一次 Hub/shared 改动后跑一次 `npm run update:hub-build`"，但**检查**比刷新更安全 —— 脚本绝不写工作树，陈旧就中止，让人去跑更新并提交 |
+| 构建后 | 断言 `dist\Token-Monitor-Setup-<version>.exe` 与 `dist\Token-Monitor-<version>.exe` 存在，再跑 `npm run verify:release-artifact-names` | `dist\` 里的旧版本产物不会被清理，"构建结束"不等于"该发的文件在"。第一条挡住拿错版本，第二条用仓库自带的校验器确认 `latest.yml` 引用的产物确实在盘上 |
+
+为此给 `scripts/update-hub-build.js` 加了 `--check`：默认行为（无参数）完全不变，仍然追加 revision 并退出 0；带 `--check` 时只在陈旧时退出 1 且**不写文件**。
+
+### 11.3 实测
+
+- `--check` 两条分支都验过：陈旧 → 退出 1 并打印指引；最新 → 退出 0。制造漂移的方式是给 `src/shared/projectKey.js` 临时加一行，验完用 `git checkout --` 精确还原。
+- 脚本整体实跑：前置检查、版本探测（app 0.76.0 / electron 43.7.9）、新的 marker 闸门、以及各失败路径的输出都正确。把 marker 弄陈旧后重跑，在**构建开始前**就中止并给出可执行指引，工作树未被改动。
+- 本机仍停在 `ensure:tokscale`：装的 `@tokscale/cli` 是 4.18.0，而上游已把 `scripts/vendor/tokscale.json` 的 `baseVersion` 提到 4.20.0，override 模式按清单自己的规则拒绝替换。**这与本次改动无关** —— 该步骤是原样保留的，且它与第十节记的 `verifyVendoredTokscaleRelease` 失败同源（`node_modules` 落后于上游）。要真正跑完构建，得先把 `node_modules` 刷到 `@tokscale/cli` 4.20.0。
