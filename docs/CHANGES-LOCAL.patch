@@ -25,14 +25,14 @@ index aaeb9154..217a777b 100644
  | adding or renaming a tracked client | [Tracked-client checklist](docs/providers/README.md#adding-a-tracked-client), including its partition invariants |
 diff --git a/docs/CHANGES-LOCAL.zh-CN.md b/docs/CHANGES-LOCAL.zh-CN.md
 new file mode 100644
-index 00000000..76bcb646
+index 00000000..764fe7a8
 --- /dev/null
 +++ b/docs/CHANGES-LOCAL.zh-CN.md
-@@ -0,0 +1,261 @@
+@@ -0,0 +1,303 @@
 +# 本地修改记录（Local Modifications）
 +
 +> 基线：上游 `ce26462f`（token-monitor v0.76.0）。全部修改已提交至自用 fork `youxiya/token-monitor`（`origin`=自用 fork，`upstream`=上游 Javis603；上游更新时 `git fetch upstream` 后 `git rebase upstream/main`）。
-+> 首次记录：2026-09-29（基线 `052667e` / v0.63.1）。最近更新：2026-10-21（rebase 到 v0.76.0，见第十节；Windows 打包脚本入库，见第十一节）。
++> 首次记录：2026-09-29（基线 `052667e` / v0.63.1）。最近更新：2026-10-22（跨天重启时先显示上次的记录，见第十二节；此前为 2026-10-21 的 rebase 到 v0.76.0，见第十节，以及 Windows 打包脚本入库，见第十一节）。
 +> 机器可回放补丁：[`docs/CHANGES-LOCAL.patch`](CHANGES-LOCAL.patch)（供应用到**上游干净基线**；`git apply` 应用，`git apply -R` 撤销）。
 +> 项目导航文档：[`docs/PROJECT_MAP.zh-CN.md`](PROJECT_MAP.zh-CN.md)。
 +
@@ -290,6 +290,48 @@ index 00000000..76bcb646
 +| GitHub release 下载超时 | fork 版 tokscale 是 GitHub release 里的 29MB 资产，`ensure-vendored-tokscale.js` 给下载设了 **60 秒硬超时**，直连本机 **4 分钟都下不完**（最终 `This operation was aborted`） | 让 Node 走代理：Node 24 支持 `NODE_USE_ENV_PROXY=1` + `HTTPS_PROXY`，**同一个文件 8.6 秒下完**。脚本现在检测到 `HTTPS_PROXY`/`HTTP_PROXY` 就会自动设 `NODE_USE_ENV_PROXY=1` |
 +
 +> 代理这一条也解释了为什么 `ensure-vendored-tokscale.js` 明明能连通 GitHub（HEAD 请求 200）却下不动文件：连通 ≠ 带宽够，而超时是按整段下载算的。
++
++## 十二、2026-10-22：开机秒开 —— 跨天重启时先显示上次的记录
++
++### 12.1 症状与根因
++
++电脑重启（跨天）后打开 widget，大数字是 `0`，要等第一次全量扫描跑完才有数。实测那段时间是 **18.1 秒**（热缓存；磁盘全冷时更久）。
++
++根因不在"没有持久化"——锚点一直在写（`collector-anchor.json` 418 KB）、SQLite 会话归档也���（972 KB）。根因是**跨天时那份记录不被采纳**：冷启动种子（`collector-anchor.json` → `deviceRecordFromAnchor`）的信任校验第一个条件就是 `saved.dateKey !== localTodayKey(now)` → 拒绝。电脑重启必然跨天（除非当天重启），于是种子每次都作废，widget 只能等全量扫描。
++
++### 12.2 改动
++
++| 位置 | 改动 |
++|---|---|
++| `src/shared/collector.js` | 把信任校验拆成两层：配置类规则（客户端集、定价、扫描根、游标模型版本、目录账本）抽成新的 `anchorConfigTrust`，collector 与种子**共用**；"必须同日"这条只留给 `collectorAnchorTrust` |
++| `src/shared/anchorSeed.js` | 种子改用 `anchorConfigTrust`，因此接受跨天锚点：照搬它的三个周期，记录带锚点自己的采集时间 |
++| `src/electron/main.js` | 跨天时给种子的推送打上 `staleSeed` 标记，并带 `at`（锚点采集时间） |
++| `src/electron/renderer/app.js` + `index.html` + `styles.css` + `i18n.js` | 大数字下方显示"上次更新于 X 前"（6 语言），真实数据到达后自动消失 |
++
++### 12.3 为什么这样是诚实的
++
++- 种子本来就是"上次运行的那条记录"，把它显示出来正是它存在的意义；
++- 它带**自己的**采集时间，UI 明示年龄，所以不会被读成实时读数 —— 这是仪表盘显示"上次已知值 + 时间戳"的通行做法；
++- **配置变了仍然拒绝**：客户端集、定价、扫描根、游标模型版本任一变动，那份锚点的数字含义就不同了，显示出来等于报错数据。这种情况仍旧留在"等真实数据"的路径上。
++
++### 12.4 实测（锚点回滚到昨天，模拟跨天重启）
++
++| | 修复前 | 修复后 |
++|---|---|---|
++| 首屏出现数字 | **18.1 s** | **3.7 s** |
++| 大数字内容 | `0` | 上次运行的累计值 + 下方一行"上次更新于 46 分钟前" |
++| 真实数字接管 | 18.1 s | 18.1 s（不变，第一次全量扫描照旧） |
++
++### 12.5 剩下的那 18 秒，以及没做的那个改动
++
++真实数字仍然要等第一次全量扫描：它是 **3 次串行 tokscale**（`--today` / `--month` / `--since 2024-01-01`），而这三次成本相同 —— tokscale 每次都要全量加载再过滤（collector.js 里那句"every tokscale period scan costs the same full load + filter"），实测合计约 27 秒。
++
++要压掉这 27 秒，得让**跨天锚点**也能当增量基线：扫一次 `--since <锚点日期>`，再用现成的 `applyPeriodDelta` 推月/年。这在数学上是精确的（锚点自己的 today 桶就是基线，和 watch tick 同一条路径），但有两个前提没满足：
++
++1. 它改了账务契约 —— `docs/architecture.md` 写着"An anchor from another date forces a full scan"；
++2. tokscale 的扫描 JSON **不带逐日明细**（逐日历史来自独立的 `tokscale graph` 命令），所以"今天"那一格取不到，还得再补一次扫描，省不下多少。
++
++所以这次没做，留给单独评估。已知的替代方向是让 tokscale 侧支持逐日输出，或者接受 2 次扫描（`--since` + `--today`）换掉 3 次。
 diff --git a/docs/NETWORK-SETUP.zh-CN.md b/docs/NETWORK-SETUP.zh-CN.md
 new file mode 100644
 index 00000000..e1682e9c
@@ -1675,10 +1717,18 @@ index 3164f1e8..592accae 100644
  fs.writeFileSync(REGISTRY_PATH, `${JSON.stringify(next, null, 2)}\n`);
  console.log('Updated Hub build registry. Run npm run sync:worker to copy it into worker/.');
 diff --git a/src/electron/main.js b/src/electron/main.js
-index c925383e..27fee271 100644
+index c925383e..075524ca 100644
 --- a/src/electron/main.js
 +++ b/src/electron/main.js
-@@ -610,6 +610,7 @@ function defaultSettings() {
+@@ -94,6 +94,7 @@ const { seedSplitClients } = require('../shared/clientIdentitySplits');
+ const {
+   clientDiagnosticRoots,
+   getTokscaleStatus,
++  localTodayKey,
+   lookupModelPricing,
+   pricingFingerprint,
+   normalizeHistoryIntervalMs,
+@@ -610,6 +611,7 @@ function defaultSettings() {
      tokenRateMode: 'speed',
      heatmapMetric: 'cost',
      modelRankingMetric: 'tokens',
@@ -1686,7 +1736,7 @@ index c925383e..27fee271 100644
      homeActiveDaysWindow: 'all',
      // How a live session's context gauge reads. That direction is a choice the
      // gauge cannot make on its own, so it is stated here rather than assumed:
-@@ -785,6 +786,12 @@ function normalizeHeatmapMetric(value, fallback = 'cost') {
+@@ -785,6 +787,12 @@ function normalizeHeatmapMetric(value, fallback = 'cost') {
    return fallback === 'tokens' ? 'tokens' : 'cost';
  }
  
@@ -1699,7 +1749,7 @@ index c925383e..27fee271 100644
  function normalizeHomeActiveDaysWindow(value, fallback = 'all') {
    const next = String(value || '').trim();
    if (next === 'year') return 'year';
-@@ -2685,6 +2692,7 @@ function readSettings() {
+@@ -2685,6 +2693,7 @@ function readSettings() {
      merged.syncUploadIntervalMs = normalizeSyncUploadIntervalMs(merged.syncUploadIntervalMs);
      merged.heatmapMetric = normalizeHeatmapMetric(merged.heatmapMetric);
      merged.modelRankingMetric = normalizeRankingMetric(merged.modelRankingMetric);
@@ -1707,7 +1757,41 @@ index c925383e..27fee271 100644
      merged.homeActiveDaysWindow = normalizeHomeActiveDaysWindow(merged.homeActiveDaysWindow);
      merged.sessionTitlesEnabled = parseBoolean(merged.sessionTitlesEnabled, true);
      merged.sessionContextMetric = normalizeSessionContextMetric(merged.sessionContextMetric);
-@@ -8055,6 +8063,7 @@ app.whenReady().then(() => {
+@@ -5124,8 +5133,9 @@ function primeLocalStatsFromAnchor(usageOptions, widgetProducerOwner) {
+   // Cold start only. startMode() re-enters here on structural settings changes
+   // as well, and there the numbers already collected are newer than any anchor.
+   if (lastCollectedDevice) return;
++  const saved = readJson(path.join(sharedDataDir(), 'collector-anchor.json'), null);
+   const deviceRecord = deviceRecordFromAnchor(
+-    readJson(path.join(sharedDataDir(), 'collector-anchor.json'), null),
++    saved,
+     {
+       envelope: electronDeviceEnvelope(),
+       clients: usageOptions.clients,
+@@ -5157,6 +5167,13 @@ function primeLocalStatsFromAnchor(usageOptions, widgetProducerOwner) {
+   }
+   localDevice = visible;
+   localStats = withHistoryPreview(aggregateDevices([visible], 0), [visible]);
++  // A seed from another local day is the previous run's record, not a live
++  // reading: its "today" is a closed day and its totals are as of the capture.
++  // The widget says so, so the number it puts on screen is never mistaken for
++  // one the collector just produced. A same-day seed needs no marker — its
++  // numbers are today's either way.
++  const seedDay = String(saved?.dateKey || '');
++  const staleSeed = Boolean(seedDay) && seedDay !== localTodayKey(new Date());
+   // Through the normal publisher, not straight to the renderer: the tray reads
+   // what sendPush sets, and in tray mode the window is hidden, so a seed that
+   // only reached the renderer would leave the one visible surface on zero.
+@@ -5166,7 +5183,7 @@ function primeLocalStatsFromAnchor(usageOptions, widgetProducerOwner) {
+   // interval this run's first live scan needs on a snapshot it is republishing.
+   sendPush({
+     event: 'stats',
+-    data: { type: 'stats', reason: 'anchor', stats: localStats, at: deviceRecord.receivedAt }
++    data: { type: 'stats', reason: 'anchor', stats: localStats, at: deviceRecord.receivedAt, staleSeed }
+   }, { skipExport: true, deferToRenderer: true, widgetProducerOwner });
+ }
+ 
+@@ -8055,6 +8072,7 @@ app.whenReady().then(() => {
        periodMonthMode: normalizePeriodMonthMode(patch.periodMonthMode ?? settings.periodMonthMode),
        modelRankingMetric: normalizeRankingMetric(patch.modelRankingMetric ?? settings.modelRankingMetric),
        sessionTitlesEnabled: parseBoolean(patch.sessionTitlesEnabled ?? settings.sessionTitlesEnabled, true),
@@ -1772,7 +1856,7 @@ index 58d108d5..12764f17 100644
    ['projects', projectNestedUsage]
  ];
 diff --git a/src/electron/renderer/app.js b/src/electron/renderer/app.js
-index 89d9d2f6..3ee42976 100644
+index 89d9d2f6..6f64b6b0 100644
 --- a/src/electron/renderer/app.js
 +++ b/src/electron/renderer/app.js
 @@ -196,6 +196,7 @@ const {
@@ -1783,12 +1867,21 @@ index 89d9d2f6..3ee42976 100644
  const projectRowsApi = window.TokenMonitorProjectRows;
  const sessionDetailApi = window.TokenMonitorSessionDetail;
  const windowShortcutApi = window.TokenMonitorWindowShortcut;
+@@ -309,7 +310,7 @@ function normalizeInitialViewValue(value, allowed, fallback) {
+   return allowed.has(raw) ? raw : fallback;
+ }
+ 
+-const state = { period: normalizeInitialViewValue(initialViewState.period, viewPeriodValues, 'today'), appUpdate: null, breakdown: normalizeInitialViewValue(initialViewState.breakdown, viewBreakdownValues, 'home'), viewSwitcherOpen: false, viewSwitcherHasOpened: false, limitDetailTooltipHasOpened: false, limitDetailTooltipActive: false, limitDetailTooltipRenderPending: false, settings: null, windowVisible: new URLSearchParams(window.location.search).get('windowHidden') !== '1', stats: null, homeHistory: null, homeHistoryBusy: false, homeHistoryRequested: false, homeHistorySignature: '', homeHistoryRetries: 0, homeHistoryRetryTimer: null, homeActivityScrollLeft: null, homeActivityFollowEnd: true, homeActivityResizeObserver: null, serviceStatus: null, serviceStatusBusy: false, serviceProvidersExpanded: false, trendSettingsExpanded: false, trendsActivating: false, homeSettingsExpanded: false, homeLimitSettingsExpanded: false, limitProviderSettingsExpanded: '', clientHealthExpanded: '', clientSources: clientSourceCacheApi.createClientSourceCache(), clientSourcesKey: '', clientSourcesRequest: 0, subscriptionEditingId: '', subscriptionTopUps: [], subscriptionFormBase: null, subscriptionEditorTransitionId: 0, serviceStatusTicker: null, refreshTimer: null, refreshBusy: false, refreshFeedbackTimer: null, currentTotal: 0, rowSignature: '', streamConnected: false, streamFailure: null, mode: 'idle', appInfo: null, systemDarkUi: false, tokscaleStatus: null, hubInfo: null, hubBuildStatus: null, cursorAccount: { status: null, error: '' }, cursorAccountExpanded: false, codexAccountExpanded: false, codexAccountError: '', codexSignInBusy: false, codexSignInFlowId: '', codexLoginUrl: '', codexLoginStatus: '', codexLoginOutput: '', codexWorkspaceChoices: [], codexWorkspaceId: '', codexActiveAccount: null, codexPendingActiveAccount: null, codexPendingActiveAccountUntil: 0, codexPendingActiveAccountTimer: null, customPricingExpanded: false, claudeAccountExpanded: false, claudePendingCheckSince: 0, opencodeProfileCount: 0, opencodeCookieExpanded: false, openrouterProfileCount: 0, openrouterAccountExpanded: false, thirdPartyProfileCount: 0, thirdPartyAccountExpanded: false, deepseekAccountExpanded: false, deepseekPendingCheckSince: 0, minimaxAccountExpanded: false, minimaxPendingCheckSince: 0, factoryAccountExpanded: false, factoryPendingCheckSince: 0, clineAccountExpanded: false, clinePendingCheckSince: 0, zaiAccountExpanded: false, zaiPendingCheckSince: 0, zaiteamAccountExpanded: false, zaiteamPendingCheckSince: 0, volcengineAccountExpanded: false, volcenginePendingCheckSince: 0, volcengineAgentExpanded: false, qoderAccountExpanded: false, qoderPendingCheckSince: 0, kimiAccountExpanded: false, kimiPendingCheckSince: 0, ollamaAccountExpanded: false, ollamaPendingCheckSince: 0, mimoAccountExpanded: false, mimoAccountError: '', antigravityAccountExpanded: false, antigravityAccountError: '', antigravitySignInBusy: false, workbuddyAccountExpanded: false, workbuddyAccountError: '', workbuddySignInBusy: false, workbuddyCancelBusy: false, workbuddyMutationBusy: false, workbuddyLoginAttempt: 0, workbuddyLoginStatusKey: '', workbuddyAccountsRevision: 0, copilotAccountExpanded: false, copilotManualExpanded: false, copilotPendingCheckSince: 0, copilotSignInBusy: false, copilotSignInCancelable: false, copilotSignInFlowId: '', copilotAuthorizeMessage: '', copilotLoginStatus: '', copilotErrorMessage: '', floatingBubble: initialFloatingBubble, suppressInitialNumberAnimation: window.__TOKEN_MONITOR_SUPPRESS_INITIAL_NUMBER_ANIMATION__ === true, openSession: null, detailSort: 'time', recordingWindowShortcut: false, windowShortcutInvalid: false, toolSearchQuery: '', limitProviderSearchQuery: '', accountPanelMessages: {} };
++const state = { period: normalizeInitialViewValue(initialViewState.period, viewPeriodValues, 'today'), appUpdate: null, breakdown: normalizeInitialViewValue(initialViewState.breakdown, viewBreakdownValues, 'home'), viewSwitcherOpen: false, viewSwitcherHasOpened: false, limitDetailTooltipHasOpened: false, limitDetailTooltipActive: false, limitDetailTooltipRenderPending: false, settings: null, windowVisible: new URLSearchParams(window.location.search).get('windowHidden') !== '1', stats: null, homeHistory: null, homeHistoryBusy: false, homeHistoryRequested: false, homeHistorySignature: '', homeHistoryRetries: 0, homeHistoryRetryTimer: null, homeActivityScrollLeft: null, homeActivityFollowEnd: true, homeActivityResizeObserver: null, serviceStatus: null, serviceStatusBusy: false, serviceProvidersExpanded: false, trendSettingsExpanded: false, trendsActivating: false, homeSettingsExpanded: false, homeLimitSettingsExpanded: false, limitProviderSettingsExpanded: '', clientHealthExpanded: '', clientSources: clientSourceCacheApi.createClientSourceCache(), clientSourcesKey: '', clientSourcesRequest: 0, subscriptionEditingId: '', subscriptionTopUps: [], subscriptionFormBase: null, subscriptionEditorTransitionId: 0, serviceStatusTicker: null, refreshTimer: null, refreshBusy: false, refreshFeedbackTimer: null, currentTotal: 0, coldStartSeed: null, rowSignature: '', streamConnected: false, streamFailure: null, mode: 'idle', appInfo: null, systemDarkUi: false, tokscaleStatus: null, hubInfo: null, hubBuildStatus: null, cursorAccount: { status: null, error: '' }, cursorAccountExpanded: false, codexAccountExpanded: false, codexAccountError: '', codexSignInBusy: false, codexSignInFlowId: '', codexLoginUrl: '', codexLoginStatus: '', codexLoginOutput: '', codexWorkspaceChoices: [], codexWorkspaceId: '', codexActiveAccount: null, codexPendingActiveAccount: null, codexPendingActiveAccountUntil: 0, codexPendingActiveAccountTimer: null, customPricingExpanded: false, claudeAccountExpanded: false, claudePendingCheckSince: 0, opencodeProfileCount: 0, opencodeCookieExpanded: false, openrouterProfileCount: 0, openrouterAccountExpanded: false, thirdPartyProfileCount: 0, thirdPartyAccountExpanded: false, deepseekAccountExpanded: false, deepseekPendingCheckSince: 0, minimaxAccountExpanded: false, minimaxPendingCheckSince: 0, factoryAccountExpanded: false, factoryPendingCheckSince: 0, clineAccountExpanded: false, clinePendingCheckSince: 0, zaiAccountExpanded: false, zaiPendingCheckSince: 0, zaiteamAccountExpanded: false, zaiteamPendingCheckSince: 0, volcengineAccountExpanded: false, volcenginePendingCheckSince: 0, volcengineAgentExpanded: false, qoderAccountExpanded: false, qoderPendingCheckSince: 0, kimiAccountExpanded: false, kimiPendingCheckSince: 0, ollamaAccountExpanded: false, ollamaPendingCheckSince: 0, mimoAccountExpanded: false, mimoAccountError: '', antigravityAccountExpanded: false, antigravityAccountError: '', antigravitySignInBusy: false, workbuddyAccountExpanded: false, workbuddyAccountError: '', workbuddySignInBusy: false, workbuddyCancelBusy: false, workbuddyMutationBusy: false, workbuddyLoginAttempt: 0, workbuddyLoginStatusKey: '', workbuddyAccountsRevision: 0, copilotAccountExpanded: false, copilotManualExpanded: false, copilotPendingCheckSince: 0, copilotSignInBusy: false, copilotSignInCancelable: false, copilotSignInFlowId: '', copilotAuthorizeMessage: '', copilotLoginStatus: '', copilotErrorMessage: '', floatingBubble: initialFloatingBubble, suppressInitialNumberAnimation: window.__TOKEN_MONITOR_SUPPRESS_INITIAL_NUMBER_ANIMATION__ === true, openSession: null, detailSort: 'time', recordingWindowShortcut: false, windowShortcutInvalid: false, toolSearchQuery: '', limitProviderSearchQuery: '', accountPanelMessages: {} };
+ state.devinAccountExpanded = false;
+ state.devinPendingCheckSince = 0;
+ state.icloudStatus = null;
 @@ -373,7 +374,7 @@ let viewSwitcherLongPressTimer = null;
  let viewSwitcherLongPressTriggered = false;
  let viewSwitcherHoverCloseTimer = null;
  const els = {
 -  shell: document.querySelector('.shell'), status: document.getElementById('status'), liveDot: document.getElementById('liveDot'), tokenRateReveal: document.getElementById('tokenRateReveal'), liveTokenRate: document.getElementById('liveTokenRate'), liveTokenRateValue: document.getElementById('liveTokenRateValue'), totalTokens: document.getElementById('totalTokens'), totalTokensCompact: document.getElementById('totalTokensCompact'), cost: document.getElementById('cost'), homePanel: document.getElementById('homePanel'), breakdown: document.getElementById('breakdown'), sessionPagerHost: document.getElementById('sessionPagerHost'), serviceStatusPanel: document.getElementById('serviceStatusPanel'), limitsPanel: document.getElementById('limitsPanel'), trendsPanel: document.getElementById('trendsPanel'), viewSwitcher: document.getElementById('viewSwitcher'), pinButton: document.getElementById('pinButton'), utilityActions: document.getElementById('utilityActions'), settingsButton: document.getElementById('settingsButton'), settingsPanel: document.getElementById('settingsPanel'), languageInput: document.getElementById('languageInput'), currencyInput: document.getElementById('currencyInput'), currencyRateRow: document.getElementById('currencyRateRow'), currencyRateModeAuto: document.getElementById('currencyRateModeAuto'), currencyRateModeManual: document.getElementById('currencyRateModeManual'), currencyRateManualField: document.getElementById('currencyRateManualField'), currencyRateOverrideInput: document.getElementById('currencyRateOverrideInput'), currencyRateStatus: document.getElementById('currencyRateStatus'), hubUrlInput: document.getElementById('hubUrlInput'), secretInput: document.getElementById('secretInput'), deviceIdInput: document.getElementById('deviceIdInput'), limitProviderCheckboxes: document.getElementById('limitProviderCheckboxes'), limitsRefreshInput: document.getElementById('limitsRefreshInput'), limitsRefreshAdaptiveNote: document.getElementById('limitsRefreshAdaptiveNote'), showLimitSourceInput: document.getElementById('showLimitSourceInput'), maskLimitAccountEmailsInput: document.getElementById('maskLimitAccountEmailsInput'), showLimitUsedInputs: Array.from(document.querySelectorAll('input[name="showLimitUsed"]')), liveDotInput: document.getElementById('liveDotInput'), toolIconsInput: document.getElementById('toolIconsInput'), floatingBubbleInput: document.getElementById('floatingBubbleInput'), floatingBubbleTriggerInputs: Array.from(document.querySelectorAll('input[name="floatingBubbleTrigger"]')), floatingBubbleTriggerRow: document.getElementById('floatingBubbleTriggerRow'), floatingBubbleContentInput: document.getElementById('floatingBubbleContentInput'), floatingBubbleContentRow: document.getElementById('floatingBubbleContentRow'), floatingBubbleComposer: document.getElementById('floatingBubbleComposer'), floatingBubbleContent: document.getElementById('floatingBubbleContent'), discordRpcInput: document.getElementById('discordRpcInput'), windowBehaviorInput: document.getElementById('windowBehaviorInput'), keepAboveTaskbarInput: document.getElementById('keepAboveTaskbarInput'), keepAboveTaskbarRow: document.getElementById('keepAboveTaskbarRow'), showTrayIconInput: document.getElementById('showTrayIconInput'), showTrayProviderBadgeInput: document.getElementById('showTrayProviderBadgeInput'), hideAppIconInput: document.getElementById('hideAppIconInput'), hideAppIconRow: document.getElementById('hideAppIconRow'), hideAppIconOptions: document.getElementById('hideAppIconOptions'), trayModeInput: document.getElementById('trayModeInput'), trayContentInput: document.getElementById('trayContentInput'), trayComposer: document.getElementById('trayComposer'), windowToggleShortcutValue: document.getElementById('windowToggleShortcutValue'), windowToggleShortcutClearButton: document.getElementById('windowToggleShortcutClearButton'), windowToggleShortcutNote: document.getElementById('windowToggleShortcutNote'), glassInput: document.getElementById('glassInput'), blurInput: document.getElementById('blurInput'), zoomInput: document.getElementById('zoomInput'), resetGlassButton: document.getElementById('resetGlassButton'), resetDepthButton: document.getElementById('resetDepthButton'), resetZoomButton: document.getElementById('resetZoomButton'), saveSettingsButton: document.getElementById('saveSettingsButton'), clientDisplayList: document.getElementById('clientDisplayList'), wslScanInput: document.getElementById('wslScanInput'), wslScanRow: document.getElementById('wslScanRow'), wslPanel: document.getElementById('wslPanel'), openConfigButton: document.getElementById('openConfigButton'), exportAutoInput: document.getElementById('exportAutoInput'), exportAutoDetails: document.getElementById('exportAutoDetails'), exportAutoStatus: document.getElementById('exportAutoStatus'), exportDirLabel: document.getElementById('exportDirLabel'), exportPickDirButton: document.getElementById('exportPickDirButton'), exportIntervalInput: document.getElementById('exportIntervalInput'), exportNowButton: document.getElementById('exportNowButton'), refreshButton: document.getElementById('refreshButton'), minButton: document.getElementById('minButton'), closeButton: document.getElementById('closeButton'), floatingBubbleTab: document.getElementById('floatingBubbleTab'),
-+  shell: document.querySelector('.shell'), status: document.getElementById('status'), liveDot: document.getElementById('liveDot'), tokenRateReveal: document.getElementById('tokenRateReveal'), liveTokenRate: document.getElementById('liveTokenRate'), liveTokenRateValue: document.getElementById('liveTokenRateValue'), totalTokens: document.getElementById('totalTokens'), totalTokensCompact: document.getElementById('totalTokensCompact'), cost: document.getElementById('cost'), homePanel: document.getElementById('homePanel'), breakdown: document.getElementById('breakdown'), modelBreakdownModeHost: document.getElementById('modelBreakdownModeHost'), modelBreakdownModeButtons: null, sessionPagerHost: document.getElementById('sessionPagerHost'), serviceStatusPanel: document.getElementById('serviceStatusPanel'), limitsPanel: document.getElementById('limitsPanel'), trendsPanel: document.getElementById('trendsPanel'), viewSwitcher: document.getElementById('viewSwitcher'), pinButton: document.getElementById('pinButton'), utilityActions: document.getElementById('utilityActions'), settingsButton: document.getElementById('settingsButton'), settingsPanel: document.getElementById('settingsPanel'), languageInput: document.getElementById('languageInput'), currencyInput: document.getElementById('currencyInput'), currencyRateRow: document.getElementById('currencyRateRow'), currencyRateModeAuto: document.getElementById('currencyRateModeAuto'), currencyRateModeManual: document.getElementById('currencyRateModeManual'), currencyRateManualField: document.getElementById('currencyRateManualField'), currencyRateOverrideInput: document.getElementById('currencyRateOverrideInput'), currencyRateStatus: document.getElementById('currencyRateStatus'), hubUrlInput: document.getElementById('hubUrlInput'), secretInput: document.getElementById('secretInput'), deviceIdInput: document.getElementById('deviceIdInput'), limitProviderCheckboxes: document.getElementById('limitProviderCheckboxes'), limitsRefreshInput: document.getElementById('limitsRefreshInput'), limitsRefreshAdaptiveNote: document.getElementById('limitsRefreshAdaptiveNote'), showLimitSourceInput: document.getElementById('showLimitSourceInput'), maskLimitAccountEmailsInput: document.getElementById('maskLimitAccountEmailsInput'), showLimitUsedInputs: Array.from(document.querySelectorAll('input[name="showLimitUsed"]')), liveDotInput: document.getElementById('liveDotInput'), toolIconsInput: document.getElementById('toolIconsInput'), floatingBubbleInput: document.getElementById('floatingBubbleInput'), floatingBubbleTriggerInputs: Array.from(document.querySelectorAll('input[name="floatingBubbleTrigger"]')), floatingBubbleTriggerRow: document.getElementById('floatingBubbleTriggerRow'), floatingBubbleContentInput: document.getElementById('floatingBubbleContentInput'), floatingBubbleContentRow: document.getElementById('floatingBubbleContentRow'), floatingBubbleComposer: document.getElementById('floatingBubbleComposer'), floatingBubbleContent: document.getElementById('floatingBubbleContent'), discordRpcInput: document.getElementById('discordRpcInput'), windowBehaviorInput: document.getElementById('windowBehaviorInput'), keepAboveTaskbarInput: document.getElementById('keepAboveTaskbarInput'), keepAboveTaskbarRow: document.getElementById('keepAboveTaskbarRow'), showTrayIconInput: document.getElementById('showTrayIconInput'), showTrayProviderBadgeInput: document.getElementById('showTrayProviderBadgeInput'), hideAppIconInput: document.getElementById('hideAppIconInput'), hideAppIconRow: document.getElementById('hideAppIconRow'), hideAppIconOptions: document.getElementById('hideAppIconOptions'), trayModeInput: document.getElementById('trayModeInput'), trayContentInput: document.getElementById('trayContentInput'), trayComposer: document.getElementById('trayComposer'), windowToggleShortcutValue: document.getElementById('windowToggleShortcutValue'), windowToggleShortcutClearButton: document.getElementById('windowToggleShortcutClearButton'), windowToggleShortcutNote: document.getElementById('windowToggleShortcutNote'), glassInput: document.getElementById('glassInput'), blurInput: document.getElementById('blurInput'), zoomInput: document.getElementById('zoomInput'), resetGlassButton: document.getElementById('resetGlassButton'), resetDepthButton: document.getElementById('resetDepthButton'), resetZoomButton: document.getElementById('resetZoomButton'), saveSettingsButton: document.getElementById('saveSettingsButton'), clientDisplayList: document.getElementById('clientDisplayList'), wslScanInput: document.getElementById('wslScanInput'), wslScanRow: document.getElementById('wslScanRow'), wslPanel: document.getElementById('wslPanel'), openConfigButton: document.getElementById('openConfigButton'), exportAutoInput: document.getElementById('exportAutoInput'), exportAutoDetails: document.getElementById('exportAutoDetails'), exportAutoStatus: document.getElementById('exportAutoStatus'), exportDirLabel: document.getElementById('exportDirLabel'), exportPickDirButton: document.getElementById('exportPickDirButton'), exportIntervalInput: document.getElementById('exportIntervalInput'), exportNowButton: document.getElementById('exportNowButton'), refreshButton: document.getElementById('refreshButton'), minButton: document.getElementById('minButton'), closeButton: document.getElementById('closeButton'), floatingBubbleTab: document.getElementById('floatingBubbleTab'),
++  shell: document.querySelector('.shell'), status: document.getElementById('status'), liveDot: document.getElementById('liveDot'), tokenRateReveal: document.getElementById('tokenRateReveal'), liveTokenRate: document.getElementById('liveTokenRate'), liveTokenRateValue: document.getElementById('liveTokenRateValue'), totalTokens: document.getElementById('totalTokens'), totalTokensCompact: document.getElementById('totalTokensCompact'), cost: document.getElementById('cost'), totalSeedNote: document.getElementById('totalSeedNote'), homePanel: document.getElementById('homePanel'), breakdown: document.getElementById('breakdown'), modelBreakdownModeHost: document.getElementById('modelBreakdownModeHost'), modelBreakdownModeButtons: null, sessionPagerHost: document.getElementById('sessionPagerHost'), serviceStatusPanel: document.getElementById('serviceStatusPanel'), limitsPanel: document.getElementById('limitsPanel'), trendsPanel: document.getElementById('trendsPanel'), viewSwitcher: document.getElementById('viewSwitcher'), pinButton: document.getElementById('pinButton'), utilityActions: document.getElementById('utilityActions'), settingsButton: document.getElementById('settingsButton'), settingsPanel: document.getElementById('settingsPanel'), languageInput: document.getElementById('languageInput'), currencyInput: document.getElementById('currencyInput'), currencyRateRow: document.getElementById('currencyRateRow'), currencyRateModeAuto: document.getElementById('currencyRateModeAuto'), currencyRateModeManual: document.getElementById('currencyRateModeManual'), currencyRateManualField: document.getElementById('currencyRateManualField'), currencyRateOverrideInput: document.getElementById('currencyRateOverrideInput'), currencyRateStatus: document.getElementById('currencyRateStatus'), hubUrlInput: document.getElementById('hubUrlInput'), secretInput: document.getElementById('secretInput'), deviceIdInput: document.getElementById('deviceIdInput'), limitProviderCheckboxes: document.getElementById('limitProviderCheckboxes'), limitsRefreshInput: document.getElementById('limitsRefreshInput'), limitsRefreshAdaptiveNote: document.getElementById('limitsRefreshAdaptiveNote'), showLimitSourceInput: document.getElementById('showLimitSourceInput'), maskLimitAccountEmailsInput: document.getElementById('maskLimitAccountEmailsInput'), showLimitUsedInputs: Array.from(document.querySelectorAll('input[name="showLimitUsed"]')), liveDotInput: document.getElementById('liveDotInput'), toolIconsInput: document.getElementById('toolIconsInput'), floatingBubbleInput: document.getElementById('floatingBubbleInput'), floatingBubbleTriggerInputs: Array.from(document.querySelectorAll('input[name="floatingBubbleTrigger"]')), floatingBubbleTriggerRow: document.getElementById('floatingBubbleTriggerRow'), floatingBubbleContentInput: document.getElementById('floatingBubbleContentInput'), floatingBubbleContentRow: document.getElementById('floatingBubbleContentRow'), floatingBubbleComposer: document.getElementById('floatingBubbleComposer'), floatingBubbleContent: document.getElementById('floatingBubbleContent'), discordRpcInput: document.getElementById('discordRpcInput'), windowBehaviorInput: document.getElementById('windowBehaviorInput'), keepAboveTaskbarInput: document.getElementById('keepAboveTaskbarInput'), keepAboveTaskbarRow: document.getElementById('keepAboveTaskbarRow'), showTrayIconInput: document.getElementById('showTrayIconInput'), showTrayProviderBadgeInput: document.getElementById('showTrayProviderBadgeInput'), hideAppIconInput: document.getElementById('hideAppIconInput'), hideAppIconRow: document.getElementById('hideAppIconRow'), hideAppIconOptions: document.getElementById('hideAppIconOptions'), trayModeInput: document.getElementById('trayModeInput'), trayContentInput: document.getElementById('trayContentInput'), trayComposer: document.getElementById('trayComposer'), windowToggleShortcutValue: document.getElementById('windowToggleShortcutValue'), windowToggleShortcutClearButton: document.getElementById('windowToggleShortcutClearButton'), windowToggleShortcutNote: document.getElementById('windowToggleShortcutNote'), glassInput: document.getElementById('glassInput'), blurInput: document.getElementById('blurInput'), zoomInput: document.getElementById('zoomInput'), resetGlassButton: document.getElementById('resetGlassButton'), resetDepthButton: document.getElementById('resetDepthButton'), resetZoomButton: document.getElementById('resetZoomButton'), saveSettingsButton: document.getElementById('saveSettingsButton'), clientDisplayList: document.getElementById('clientDisplayList'), wslScanInput: document.getElementById('wslScanInput'), wslScanRow: document.getElementById('wslScanRow'), wslPanel: document.getElementById('wslPanel'), openConfigButton: document.getElementById('openConfigButton'), exportAutoInput: document.getElementById('exportAutoInput'), exportAutoDetails: document.getElementById('exportAutoDetails'), exportAutoStatus: document.getElementById('exportAutoStatus'), exportDirLabel: document.getElementById('exportDirLabel'), exportPickDirButton: document.getElementById('exportPickDirButton'), exportIntervalInput: document.getElementById('exportIntervalInput'), exportNowButton: document.getElementById('exportNowButton'), refreshButton: document.getElementById('refreshButton'), minButton: document.getElementById('minButton'), closeButton: document.getElementById('closeButton'), floatingBubbleTab: document.getElementById('floatingBubbleTab'),
    subscriptionList: document.getElementById('subscriptionList'), subscriptionAddForm: document.getElementById('subscriptionAddForm'), subscriptionAddToggle: document.getElementById('subscriptionAddToggle'), subscriptionAddDetails: document.getElementById('subscriptionAddDetails'), subscriptionProviderInput: document.getElementById('subscriptionProviderInput'), subscriptionAccountInput: document.getElementById('subscriptionAccountInput'), subscriptionPlanNameInput: document.getElementById('subscriptionPlanNameInput'), subscriptionAmountInput: document.getElementById('subscriptionAmountInput'), subscriptionCurrencyInput: document.getElementById('subscriptionCurrencyInput'), subscriptionIntervalCountInput: document.getElementById('subscriptionIntervalCountInput'), subscriptionIntervalInput: document.getElementById('subscriptionIntervalInput'), subscriptionStartDateInput: document.getElementById('subscriptionStartDateInput'), subscriptionAutoRenewInput: document.getElementById('subscriptionAutoRenewInput'), subscriptionNextRenewalInput: document.getElementById('subscriptionNextRenewalInput'), subscriptionNote: document.getElementById('subscriptionNote'), subscriptionOrphanNotice: document.getElementById('subscriptionOrphanNotice'), subscriptionOrphanText: document.getElementById('subscriptionOrphanText'), subscriptionOrphanAdopt: document.getElementById('subscriptionOrphanAdopt'), subscriptionOrphanDiscard: document.getElementById('subscriptionOrphanDiscard'), subscriptionSyncError: document.getElementById('subscriptionSyncError'), subscriptionNextRenewalLabel: document.getElementById('subscriptionNextRenewalLabel'), subscriptionNextRenewalNote: document.getElementById('subscriptionNextRenewalNote'), subscriptionSubmit: document.getElementById('subscriptionSubmit'), subscriptionCancelEdit: document.getElementById('subscriptionCancelEdit'), subscriptionTotalRow: document.getElementById('subscriptionTotalRow'), subscriptionErrorMessage: document.getElementById('subscriptionErrorMessage'), subscriptionPlanFields: document.getElementById('subscriptionPlanFields'), subscriptionTopUpFields: document.getElementById('subscriptionTopUpFields'), subscriptionTopUpList: document.getElementById('subscriptionTopUpList'), subscriptionTopUpDateInput: document.getElementById('subscriptionTopUpDateInput'), subscriptionTopUpAmountInput: document.getElementById('subscriptionTopUpAmountInput'), subscriptionTopUpAddButton: document.getElementById('subscriptionTopUpAddButton'), subscriptionAmountRow: document.getElementById('subscriptionAmountRow'), subscriptionTopUpHeadingRow: document.getElementById('subscriptionTopUpHeadingRow'), subscriptionKindInputs: [...document.querySelectorAll('input[name="subscriptionKind"]')]
  };
  Object.assign(els, {
@@ -1876,16 +1969,37 @@ index 89d9d2f6..3ee42976 100644
    if (modelRows.length > 0) {
      return usageAttributionRowsApi.rankRowsWithValues(modelRows, rankingMetric);
    }
-@@ -7190,6 +7236,8 @@ function render() {
+@@ -7175,6 +7221,19 @@ function setRendererSettings(next) {
+   if (titlesChanged) refreshSessionDetailHeading();
+ }
+ 
++function renderColdStartSeedNote() {
++  // A cold-start seed is the previous run's record. After a reboot across
++  // midnight its "today" is a closed day, so the number on screen is the last
++  // known one rather than this day's — saying how old it is is what keeps it
++  // from being read as a live reading. The note sits under the total, where
++  // the reader is already looking.
++  const note = els.totalSeedNote;
++  if (!note) return;
++  const age = state.coldStartSeed?.at ? relativeAgeLabel(state.coldStartSeed.at) : '';
++  note.textContent = age ? t('views.coldStartSeed', { age }) : '';
++  note.classList.toggle('hidden', !age);
++}
++
+ function render() {
+   const surface = visibleStatsSurface();
+   if (surface !== 'main') {
+@@ -7190,6 +7249,9 @@ function render() {
    syncLiveTokenRateFooterState();
    renderSessionUsageArchiveStatus();
    ensureBreakdownVisible();
 +  els.modelBreakdownModeHost?.classList.toggle('hidden', state.breakdown !== 'model');
 +  if (state.breakdown === 'model') syncModelBreakdownModeControls();
++  renderColdStartSeedNote();
    renderViewSwitcher();
    const derivedPeriod = fixedPeriodRangesApi.isDerived(state.period);
    if (derivedPeriod) {
-@@ -12582,6 +12630,12 @@ els.backHomeButton?.addEventListener('click', (event) => {
+@@ -12582,6 +12644,12 @@ els.backHomeButton?.addEventListener('click', (event) => {
    }
  });
  
@@ -1898,14 +2012,29 @@ index 89d9d2f6..3ee42976 100644
  window.addEventListener('blur', () => {
    cancelTokenRateBoost();
    clearViewSwitcherLongPress();
+@@ -13970,6 +14038,13 @@ window.tokenMonitor.onStatsPush?.((payload) => {
+     // AGENTS.md collector notes), so only the final push can retire the
+     // "just turned trends on" loading state without a flash back to empty.
+     if (payload.data?.reason !== 'progress') state.trendsActivating = false;
++    // A cold-start seed is the previous run's record, not a live reading: after
++    // a reboot across midnight its "today" is a closed day and its totals are
++    // as of the capture. Keep the capture time so the widget can say how old
++    // the numbers on screen are until the first live scan replaces them.
++    state.coldStartSeed = payload.data?.reason === 'anchor' && payload.data?.staleSeed
++      ? { at: payload.data?.at || '' }
++      : null;
+   } else {
+     return;
+   }
 diff --git a/src/electron/renderer/i18n.js b/src/electron/renderer/i18n.js
-index 54f5f42f..995d4e58 100644
+index 54f5f42f..b04f3d8f 100644
 --- a/src/electron/renderer/i18n.js
 +++ b/src/electron/renderer/i18n.js
-@@ -547,6 +547,10 @@
+@@ -547,6 +547,11 @@
        'views.limits': 'Limits',
        'views.trends': 'Trends',
        'views.backHome': 'Back to Home',
++      'views.coldStartSeed': 'Last updated {age}',
 +      'views.modelBreakdownMode': 'Model breakdown mode',
 +      'views.modelBreakdown.mixed': 'Provider / Model',
 +      'views.modelBreakdown.model': 'By Model',
@@ -1913,10 +2042,11 @@ index 54f5f42f..995d4e58 100644
        'views.switcher.next': 'Next: {view}',
        'views.switcher.choose': 'Choose view',
        'home.limits': 'Limits',
-@@ -2546,6 +2550,10 @@
+@@ -2546,6 +2551,11 @@
        'views.limits': '額度',
        'views.trends': '趨勢',
        'views.backHome': '返回主頁',
++      'views.coldStartSeed': '上次更新於 {age}',
 +      'views.modelBreakdownMode': '模型拆分方式',
 +      'views.modelBreakdown.mixed': '供應商 / 模型',
 +      'views.modelBreakdown.model': '按模型',
@@ -1924,10 +2054,11 @@ index 54f5f42f..995d4e58 100644
        'views.switcher.next': '下一個：{view}',
        'views.switcher.choose': '選擇視圖',
        'home.limits': '額度',
-@@ -4545,6 +4553,10 @@
+@@ -4545,6 +4555,11 @@
        'views.limits': '额度',
        'views.trends': '趋势',
        'views.backHome': '返回主页',
++      'views.coldStartSeed': '上次更新于 {age}',
 +      'views.modelBreakdownMode': '模型拆分方式',
 +      'views.modelBreakdown.mixed': '供应商 / 模型',
 +      'views.modelBreakdown.model': '按模型',
@@ -1935,10 +2066,11 @@ index 54f5f42f..995d4e58 100644
        'views.switcher.next': '下一个：{view}',
        'views.switcher.choose': '选择视图',
        'home.limits': '额度',
-@@ -8007,6 +8019,10 @@
+@@ -8007,6 +8022,11 @@
        'views.session': '세션',
        'views.status': '상태',
        'views.backHome': '홈으로 돌아가기',
++      'views.coldStartSeed': '{age}에 마지막 업데이트',
 +      'views.modelBreakdownMode': '모델 분류 방식',
 +      'views.modelBreakdown.mixed': '공급자 / 모델',
 +      'views.modelBreakdown.model': '모델별',
@@ -1946,10 +2078,11 @@ index 54f5f42f..995d4e58 100644
        'views.switcher.choose': '보기 선택',
        'views.switcher.next': '다음: {view}',
        'views.tool': '도구',
-@@ -10006,6 +10022,10 @@
+@@ -10006,6 +10026,11 @@
        'views.session': 'セッション',
        'views.status': 'ステータス',
        'views.backHome': 'ホームに戻る',
++      'views.coldStartSeed': '{age}に最終更新',
 +      'views.modelBreakdownMode': 'モデル分類方式',
 +      'views.modelBreakdown.mixed': 'プロバイダー / モデル',
 +      'views.modelBreakdown.model': 'モデル別',
@@ -1957,10 +2090,11 @@ index 54f5f42f..995d4e58 100644
        'views.switcher.choose': 'ビューを選択',
        'views.switcher.next': '次: {view}',
        'views.tool': 'ツール',
-@@ -10542,6 +10562,10 @@
+@@ -10542,6 +10567,11 @@
        'views.limits': 'Limites',
        'views.trends': 'Tendências',
        'views.backHome': 'Voltar para a Home',
++      'views.coldStartSeed': 'Atualizado pela última vez {age}',
 +      'views.modelBreakdownMode': 'Modo de divisão de modelo',
 +      'views.modelBreakdown.mixed': 'Provedor / Modelo',
 +      'views.modelBreakdown.model': 'Por modelo',
@@ -1969,10 +2103,18 @@ index 54f5f42f..995d4e58 100644
        'views.switcher.choose': 'Escolher tela',
        'home.limits': 'Limites',
 diff --git a/src/electron/renderer/index.html b/src/electron/renderer/index.html
-index 7e284627..35559307 100644
+index 7e284627..0b83413c 100644
 --- a/src/electron/renderer/index.html
 +++ b/src/electron/renderer/index.html
-@@ -1652,6 +1652,11 @@
+@@ -1640,6 +1640,7 @@
+         <div class="label-row"><span>TOTAL TOKENS</span></div>
+         <div class="total-number-row"><div id="totalTokens" class="total-number">0</div><div id="totalTokensCompact" class="total-compact hidden" aria-hidden="true"></div></div>
+         <div id="cost" class="cost">$0.00</div>
++        <div id="totalSeedNote" class="total-seed-note hidden"></div>
+       </section>
+ 
+       <div id="viewBackRow" class="view-back-row hidden">
+@@ -1652,6 +1653,11 @@
        <section id="fixedPeriodMessage" class="fixed-period-message hidden" role="status" aria-live="polite"></section>
  
        <section id="homePanel" class="home-panel hidden"></section>
@@ -1984,7 +2126,7 @@ index 7e284627..35559307 100644
        <section id="breakdown" class="breakdown"></section>
        <div id="session-detail-head" class="detail-head hidden"></div>
        <div id="session-detail" class="session-detail hidden"></div>
-@@ -1785,6 +1790,7 @@
+@@ -1785,6 +1791,7 @@
      <script src="syncDevicePanel.js"></script>
      <script src="selectControl.js"></script>
      <script src="usageAttributionRows.js"></script>
@@ -2204,10 +2346,26 @@ index 00000000..15f2a984
 +  };
 +});
 diff --git a/src/electron/renderer/styles.css b/src/electron/renderer/styles.css
-index bad25601..9be9988e 100644
+index bad25601..44810345 100644
 --- a/src/electron/renderer/styles.css
 +++ b/src/electron/renderer/styles.css
-@@ -3521,6 +3521,45 @@ html.is-windows .settings-panel select option {
+@@ -3446,6 +3446,15 @@ html.is-windows .settings-panel select option {
+ }
+ .cost { margin-top: var(--total-cost-gap); color: var(--readable-muted); font-size: 0.75rem; }
+ .cost { display: flex; align-items: center; gap: 3px; }
++/* Says how old the cold-start seed on screen is. The number above it is the
++   previous run's record after a reboot across midnight, so the note is what
++   keeps it from being read as a live reading. */
++.total-seed-note {
++  margin-top: 4px;
++  color: var(--muted);
++  font-size: 0.6875rem;
++  line-height: 1.3;
++}
+ .usage-cost-value { white-space: nowrap; }
+ .usage-cost-info.limit-detail-tooltip-wrap {
+   width: 11px;
+@@ -3521,6 +3530,45 @@ html.is-windows .settings-panel select option {
    padding-right: 2px;
    scrollbar-width: none;
  }
@@ -2253,6 +2411,167 @@ index bad25601..9be9988e 100644
  .breakdown::-webkit-scrollbar { width: 0; height: 0; }
  .breakdown-incomplete-hint {
    margin: 0;
+diff --git a/src/shared/anchorSeed.js b/src/shared/anchorSeed.js
+index a3bbbc6a..d3451ccc 100644
+--- a/src/shared/anchorSeed.js
++++ b/src/shared/anchorSeed.js
+@@ -1,6 +1,6 @@
+ 'use strict';
+ 
+-const { collectorAnchorTrust, computePeriodWindows, qoderCnSourcesForClients } = require('./collector');
++const { anchorConfigTrust, computePeriodWindows, qoderCnSourcesForClients } = require('./collector');
+ const { mergePeriods } = require('./usage');
+ const { filterReasonixSyntheticSessions } = require('./providers/reasonix/sessionGuard');
+ 
+@@ -11,11 +11,26 @@ const { filterReasonixSyntheticSessions } = require('./providers/reasonix/sessio
+ // (today + month + `--since allTimeSince`, run serially to avoid the CPU spike
+ // from issue #15).
+ //
+-// Whether the anchor may be reused at all is collectorAnchorTrust's call, shared
+-// with startCollector so the two cannot drift: an anchor the collector is about
+-// to discard would otherwise show the previous configuration's totals for a
+-// minute and then drop them, which reads as a counting bug rather than a seed
+-// being replaced. Seeding then adds one rule of its own, below.
++// Whether the anchor may be reused at all is the configuration question, and
++// that is shared with the collector through anchorConfigTrust so the two
++// cannot drift: an anchor the collector is about to discard would otherwise
++// show the previous configuration's totals for a minute and then drop them,
++// which reads as a counting bug rather than a seed being replaced.
++//
++// The anchor's AGE is the seed's own rule, and it is deliberately looser than
++// the collector's. The collector needs a same-day anchor because
++// applyPeriodDelta subtracts the anchor's today bucket from a fresh scan, and
++// that subtraction only means something when both describe the same day. A
++// widget that shows the last known totals while its first scan runs has no
++// such arithmetic.
++//
++// An older anchor therefore still seeds, and it seeds the record as it was:
++// the same three periods, with the anchor's own capture time as the record's
++// timestamp. The widget shows the last known numbers instead of zeros, and
++// the age of that record is what tells the reader they are looking at the
++// previous run rather than a live reading — the caller marks it (see
++// primeLocalStatsFromAnchor), because only it knows the seed is on screen.
++//
+ // Returns a device record, or null when the anchor cannot be used.
+ function deviceRecordFromAnchor(saved, options = {}) {
+   const {
+@@ -38,7 +53,7 @@ function deviceRecordFromAnchor(saved, options = {}) {
+   const qoderCnSources = qoderCnSourcesForClients(clients, { homeDir, env, platform: sourcePlatform });
+   const qoderCnDbPath = qoderCnDbPathOption === undefined ? qoderCnSources.dbPath : qoderCnDbPathOption;
+   const qoderCnProjectsDir = qoderCnProjectsDirOption === undefined ? qoderCnSources.projectsDir : qoderCnProjectsDirOption;
+-  const trust = collectorAnchorTrust(saved, { ...options, platform: sourcePlatform || process.platform, clients, allTimeSince, projectsEnabled, qoderCnDbPath, qoderCnProjectsDir, customScanPaths, now });
++  const trust = anchorConfigTrust(saved, { ...options, platform: sourcePlatform || process.platform, clients, allTimeSince, projectsEnabled, qoderCnDbPath, qoderCnProjectsDir, customScanPaths, now });
+   if (!trust) return null;
+   // The seed's own rule, and the one place it is stricter than the collector.
+   // A capture time the collector cannot trust only costs it a full scan, but
+@@ -46,6 +61,10 @@ function deviceRecordFromAnchor(saved, options = {}) {
+   // archive projection is evaluated at, so a snapshot of unknown age must not
+   // be presented as one taken now.
+   if (trust.capturedAtMs === null) return null;
++  // The anchor's three periods are the record: a same-day anchor describes
++  // today, an older one describes the closed day it captured. Either way the
++  // record carries the anchor's own timestamp, and the widget marks the age
++  // so a previous run's numbers are not read as a live reading.
+   // The anchor keeps host periods and the WSL bundle apart, the way
+   // collectUsageOnce does before summing them. Same local day is established
+   // above, so all three windows are safe to merge.
+@@ -56,6 +75,9 @@ function deviceRecordFromAnchor(saved, options = {}) {
+     return sessions === period.sessions ? period : { ...period, sessions };
+   };
+   const withWsl = (period, wslPeriod) => cleanPeriod(wslPeriod ? mergePeriods(period, wslPeriod) : period);
++  const today = withWsl(saved.today, wsl?.today);
++  const month = withWsl(saved.month, wsl?.month);
++  const allTime = withWsl(saved.allTime, wsl?.allTime);
+   // Mirrors collectUsageOnce: a non-Windows host reports no WSL status at all,
+   // a Windows host with scanning off reports it as disabled rather than absent,
+   // and otherwise the anchor's own snapshot stands until the first scan. Absent
+@@ -83,10 +105,15 @@ function deviceRecordFromAnchor(saved, options = {}) {
+     // comparing UTC days, and anywhere ahead of UTC a local day that has not
+     // rolled over in UTC yet reads as an expired window: today's tokens get
+     // dropped and the card shows the zero this whole path exists to avoid.
++    // The windows are this run's, not the anchor's: they say which day the
++    // record is being read as, and a period the anchor does not carry is
++    // empty rather than expired, so it is neither summed nor dropped.
+     periodWindows: computePeriodWindows(now),
+-    today: withWsl(saved.today, wsl?.today),
+-    month: withWsl(saved.month, wsl?.month),
+-    allTime: withWsl(saved.allTime, wsl?.allTime),
++    // A closed day contributes nothing. The key is omitted rather than set to
++    // an empty period so the record reads as "no data for this window yet".
++    ...(today ? { today } : {}),
++    ...(month ? { month } : {}),
++    ...(allTime ? { allTime } : {}),
+     ...(Object.prototype.hasOwnProperty.call(saved, 'nativeSessions') ? { nativeSessions: saved.nativeSessions } : {}),
+     ...(Object.prototype.hasOwnProperty.call(saved, 'nativeProjects') ? { nativeProjects: saved.nativeProjects } : {})
+   };
+diff --git a/src/shared/collector.js b/src/shared/collector.js
+index 2208f0ca..787599f6 100644
+--- a/src/shared/collector.js
++++ b/src/shared/collector.js
+@@ -2259,18 +2259,25 @@ function qoderCnProjectsDirForClients(clientsCsv, options = {}) {
+   return qoderCnSourcesForClients(clientsCsv, options).projectsDir;
+ }
+ 
+-// The one place that decides whether a persisted anchor may be reused, shared by
+-// startCollector and by the widget's cold-start seed. Two consumers with two
+-// copies of these rules is how they drift, and a drifted copy shows the previous
+-// configuration's totals as if they were current.
++// Whether the anchor still describes the SAME configuration: the same tracked
++// clients, the same pricing, the same scan roots, the same all-time window.
++// That is the question both consumers need answered, and they must not answer
++// it differently: two copies of these rules is how they drift, and a drifted
++// copy shows the previous configuration's totals as if they were current.
+ //
+-// Returns null when the anchor is unusable at all. Otherwise `capturedAtMs` is
+-// the moment it was written, or null when that moment cannot be trusted: the
+-// collector still reuses the periods then and simply forces a full scan, while
+-// a seed has nothing to stand on and declines.
+-function collectorAnchorTrust(saved, options = {}) {
++// Returns null when the anchor does not describe the current configuration at
++// all. Otherwise `capturedAtMs` is the moment it was written, or null when that
++// moment cannot be trusted: the collector still reuses the periods then and
++// simply forces a full scan, while a seed has nothing to stand on and declines.
++//
++// Note what this deliberately does NOT decide: the anchor's age. A yesterday's
++// anchor still describes today's configuration; only the collector's delta
++// arithmetic needs the anchor to belong to the same day (see
++// collectorAnchorTrust), and a widget that shows the last known totals while
++// its first scan runs does not.
++function anchorConfigTrust(saved, options = {}) {
+   const { clients = '', allTimeSince = '', projectsEnabled = true, qoderCnDbPath = '', qoderCnProjectsDir = '', customScanPaths = null, now = new Date() } = options;
+-  if (!saved || saved.dateKey !== localTodayKey(now)) return null;
++  if (!saved) return null;
+   if (!saved.today || !saved.month || !saved.allTime) return null;
+   // A flat provenance ledger cannot prove each period's project source.
+   if (Object.keys(saved.catalogProjects || {}).length && !saved.catalogProjects.today) return null;
+@@ -2284,6 +2291,19 @@ function collectorAnchorTrust(saved, options = {}) {
+   return { capturedAtMs };
+ }
+ 
++// The collector's rule on top of the shared configuration trust: only a
++// same-day anchor can serve as the base of a delta. `applyPeriodDelta`
++// subtracts the anchor's today bucket from a fresh `--today` scan, and that
++// subtraction is only meaningful when both describe the same local day — an
++// anchor from another date is not a delta base, so the collector falls back to
++// a full scan. The widget's cold-start seed has no such arithmetic and uses
++// anchorConfigTrust directly.
++function collectorAnchorTrust(saved, options = {}) {
++  const { now = new Date() } = options;
++  if (!saved || saved.dateKey !== localTodayKey(now)) return null;
++  return anchorConfigTrust(saved, options);
++}
++
+ // Force a full scan at least this often even when the anchor is otherwise
+ // valid, so a long-running session periodically rescans month/allTime
+ // and picks up any changes that the delta-derivation might miss.
+@@ -3785,6 +3805,7 @@ module.exports = {
+   clientWatchCandidates,
+   computePeriodWindows,
+   collectorAnchorTrust,
++  anchorConfigTrust,
+   pricingFingerprint,
+   configFingerprint,
+   qoderCnDbPathForClients,
 diff --git a/src/shared/hubBuildRegistry.json b/src/shared/hubBuildRegistry.json
 index 886f0c06..21c4b77b 100644
 --- a/src/shared/hubBuildRegistry.json
@@ -2654,6 +2973,63 @@ index 3beb835d..6bf257a7 100644
  ]);
  
  // Applied to a whole file rather than case by case, so a test added later is
+diff --git a/tests/shared/anchorSeed.test.js b/tests/shared/anchorSeed.test.js
+index bf52a381..b173a500 100644
+--- a/tests/shared/anchorSeed.test.js
++++ b/tests/shared/anchorSeed.test.js
+@@ -151,10 +151,50 @@ test('the seed removes legacy Reasonix stats paths from ordinary period sessions
+   assert.deepEqual(record.month.sessions, {});
+ });
+ 
+-test('an anchor from another local day is refused', () => {
+-  assert.equal(deviceRecordFromAnchor(anchorFixture({ dateKey: '2026-08-07' }), seedOptions()), null);
++test('an anchor from another local day seeds the previous run’s record', () => {
++  // A reboot across midnight leaves yesterday's anchor behind, and the collector
++  // cannot use it as a delta base — its arithmetic needs the same local day. The
++  // widget has no such arithmetic, and an empty card until the first full scan
++  // lands is the wait this path exists to remove.
++  const record = deviceRecordFromAnchor(anchorFixture({ dateKey: '2026-08-07' }), seedOptions());
++
++  assert.notEqual(record, null);
++  // The record is the one the anchor captured: same three periods, so the
++  // widget has real numbers on screen instead of zeros.
++  assert.equal(record.today.totalTokens, 1_000);
++  assert.equal(record.month.totalTokens, 30_000);
++  assert.equal(record.allTime.totalTokens, 900_000);
++  // The timestamp is the anchor's own, not this run's: the record says how old
++  // it is rather than passing an old snapshot off as a fresh one. The widget
++  // turns it into the note under the total.
++  assert.equal(record.updatedAt, FULL_SCAN_AT);
++  assert.equal(record.receivedAt, FULL_SCAN_AT);
++  // The windows are this run's, so the kept periods are read as current.
++  assert.equal(record.periodWindows.today.key, '2026-08-08');
++});
++
++test('a stale seed survives aggregation and still reads as this run', () => {
++  const record = deviceRecordFromAnchor(anchorFixture({ dateKey: '2026-08-07' }), seedOptions());
++  const seeded = aggregateDevices([record], 0, NOW.getTime());
++
++  // The periods the anchor captured are summed as they are — that is the
++  // point of the seed. Without the current windows the aggregate's fallback
++  // comparison would call the closed day expired and drop it, which is the
++  // zero this path exists to avoid.
++  assert.equal(seeded.periods.today.totalTokens, 1_000);
++  assert.equal(seeded.periods.month.totalTokens, 30_000);
++  assert.equal(seeded.periods.allTime.totalTokens, 900_000);
++});
++
++test('an anchor that cannot describe the current configuration is refused', () => {
++  // The collector drops these anchors on load, so seeding from one would put
++  // the old configuration's totals on screen and then silently drop them.
+   assert.equal(deviceRecordFromAnchor(null, seedOptions()), null);
+   assert.equal(deviceRecordFromAnchor(anchorFixture({ month: null }), seedOptions()), null);
++  // Age alone no longer refuses an anchor; a moved configuration still does.
++  assert.equal(deviceRecordFromAnchor(anchorFixture({ dateKey: '2026-08-07' }), seedOptions({ clients: 'claude' })), null);
++  assert.equal(deviceRecordFromAnchor(anchorFixture({ dateKey: '2026-08-07' }), seedOptions({ allTimeSince: '2025-01-01' })), null);
++  assert.equal(deviceRecordFromAnchor(anchorFixture({ dateKey: '2026-08-07' }), seedOptions({ projectsEnabled: false })), null);
+ });
+ 
+ test('an anchor whose capture time cannot be trusted is refused', () => {
 diff --git a/tests/shared/clientStatus.test.js b/tests/shared/clientStatus.test.js
 index ac2d4de2..d32f5f0f 100644
 --- a/tests/shared/clientStatus.test.js

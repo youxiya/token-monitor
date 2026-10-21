@@ -1,7 +1,7 @@
 # 本地修改记录（Local Modifications）
 
 > 基线：上游 `ce26462f`（token-monitor v0.76.0）。全部修改已提交至自用 fork `youxiya/token-monitor`（`origin`=自用 fork，`upstream`=上游 Javis603；上游更新时 `git fetch upstream` 后 `git rebase upstream/main`）。
-> 首次记录：2026-09-29（基线 `052667e` / v0.63.1）。最近更新：2026-10-21（rebase 到 v0.76.0，见第十节；Windows 打包脚本入库，见第十一节）。
+> 首次记录：2026-09-29（基线 `052667e` / v0.63.1）。最近更新：2026-10-22（跨天重启时先显示上次的记录，见第十二节；此前为 2026-10-21 的 rebase 到 v0.76.0，见第十节，以及 Windows 打包脚本入库，见第十一节）。
 > 机器可回放补丁：[`docs/CHANGES-LOCAL.patch`](CHANGES-LOCAL.patch)（供应用到**上游干净基线**；`git apply` 应用，`git apply -R` 撤销）。
 > 项目导航文档：[`docs/PROJECT_MAP.zh-CN.md`](PROJECT_MAP.zh-CN.md)。
 
@@ -259,3 +259,45 @@ rebase 后 `git diff upstream/main main` = **27 文件 / +4854 / −21**，与 r
 | GitHub release 下载超时 | fork 版 tokscale 是 GitHub release 里的 29MB 资产，`ensure-vendored-tokscale.js` 给下载设了 **60 秒硬超时**，直连本机 **4 分钟都下不完**（最终 `This operation was aborted`） | 让 Node 走代理：Node 24 支持 `NODE_USE_ENV_PROXY=1` + `HTTPS_PROXY`，**同一个文件 8.6 秒下完**。脚本现在检测到 `HTTPS_PROXY`/`HTTP_PROXY` 就会自动设 `NODE_USE_ENV_PROXY=1` |
 
 > 代理这一条也解释了为什么 `ensure-vendored-tokscale.js` 明明能连通 GitHub（HEAD 请求 200）却下不动文件：连通 ≠ 带宽够，而超时是按整段下载算的。
+
+## 十二、2026-10-22：开机秒开 —— 跨天重启时先显示上次的记录
+
+### 12.1 症状与根因
+
+电脑重启（跨天）后打开 widget，大数字是 `0`，要等第一次全量扫描跑完才有数。实测那段时间是 **18.1 秒**（热缓存；磁盘全冷时更久）。
+
+根因不在"没有持久化"——锚点一直在写（`collector-anchor.json` 418 KB）、SQLite 会话归档也���（972 KB）。根因是**跨天时那份记录不被采纳**：冷启动种子（`collector-anchor.json` → `deviceRecordFromAnchor`）的信任校验第一个条件就是 `saved.dateKey !== localTodayKey(now)` → 拒绝。电脑重启必然跨天（除非当天重启），于是种子每次都作废，widget 只能等全量扫描。
+
+### 12.2 改动
+
+| 位置 | 改动 |
+|---|---|
+| `src/shared/collector.js` | 把信任校验拆成两层：配置类规则（客户端集、定价、扫描根、游标模型版本、目录账本）抽成新的 `anchorConfigTrust`，collector 与种子**共用**；"必须同日"这条只留给 `collectorAnchorTrust` |
+| `src/shared/anchorSeed.js` | 种子改用 `anchorConfigTrust`，因此接受跨天锚点：照搬它的三个周期，记录带锚点自己的采集时间 |
+| `src/electron/main.js` | 跨天时给种子的推送打上 `staleSeed` 标记，并带 `at`（锚点采集时间） |
+| `src/electron/renderer/app.js` + `index.html` + `styles.css` + `i18n.js` | 大数字下方显示"上次更新于 X 前"（6 语言），真实数据到达后自动消失 |
+
+### 12.3 为什么这样是诚实的
+
+- 种子本来就是"上次运行的那条记录"，把它显示出来正是它存在的意义；
+- 它带**自己的**采集时间，UI 明示年龄，所以不会被读成实时读数 —— 这是仪表盘显示"上次已知值 + 时间戳"的通行做法；
+- **配置变了仍然拒绝**：客户端集、定价、扫描根、游标模型版本任一变动，那份锚点的数字含义就不同了，显示出来等于报错数据。这种情况仍旧留在"等真实数据"的路径上。
+
+### 12.4 实测（锚点回滚到昨天，模拟跨天重启）
+
+| | 修复前 | 修复后 |
+|---|---|---|
+| 首屏出现数字 | **18.1 s** | **3.7 s** |
+| 大数字内容 | `0` | 上次运行的累计值 + 下方一行"上次更新于 46 分钟前" |
+| 真实数字接管 | 18.1 s | 18.1 s（不变，第一次全量扫描照旧） |
+
+### 12.5 剩下的那 18 秒，以及没做的那个改动
+
+真实数字仍然要等第一次全量扫描：它是 **3 次串行 tokscale**（`--today` / `--month` / `--since 2024-01-01`），而这三次成本相同 —— tokscale 每次都要全量加载再过滤（collector.js 里那句"every tokscale period scan costs the same full load + filter"），实测合计约 27 秒。
+
+要压掉这 27 秒，得让**跨天锚点**也能当增量基线：扫一次 `--since <锚点日期>`，再用现成的 `applyPeriodDelta` 推月/年。这在数学上是精确的（锚点自己的 today 桶就是基线，和 watch tick 同一条路径），但有两个前提没满足：
+
+1. 它改了账务契约 —— `docs/architecture.md` 写着"An anchor from another date forces a full scan"；
+2. tokscale 的扫描 JSON **不带逐日明细**（逐日历史来自独立的 `tokscale graph` 命令），所以"今天"那一格取不到，还得再补一次扫描，省不下多少。
+
+所以这次没做，留给单独评估。已知的替代方向是让 tokscale 侧支持逐日输出，或者接受 2 次扫描（`--since` + `--today`）换掉 3 次。
