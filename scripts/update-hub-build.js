@@ -17,5 +17,12 @@ if (JSON.stringify(previous) === JSON.stringify(next)) {
   process.exit(0);
 }
 
+// `--check` reports a stale registry without touching the tree, so a packaging
+// step can fail fast instead of shipping an outdated Hub build identity.
+if (process.argv.includes('--check')) {
+  console.error('Hub build registry is stale. Run `npm run update:hub-build` and commit the result.');
+  process.exit(1);
+}
+
 fs.writeFileSync(REGISTRY_PATH, `${JSON.stringify(next, null, 2)}\n`);
 console.log('Updated Hub build registry. Run npm run sync:worker to copy it into worker/.');
