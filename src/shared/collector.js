@@ -2259,18 +2259,25 @@ function qoderCnProjectsDirForClients(clientsCsv, options = {}) {
   return qoderCnSourcesForClients(clientsCsv, options).projectsDir;
 }
 
-// The one place that decides whether a persisted anchor may be reused, shared by
-// startCollector and by the widget's cold-start seed. Two consumers with two
-// copies of these rules is how they drift, and a drifted copy shows the previous
-// configuration's totals as if they were current.
+// Whether the anchor still describes the SAME configuration: the same tracked
+// clients, the same pricing, the same scan roots, the same all-time window.
+// That is the question both consumers need answered, and they must not answer
+// it differently: two copies of these rules is how they drift, and a drifted
+// copy shows the previous configuration's totals as if they were current.
 //
-// Returns null when the anchor is unusable at all. Otherwise `capturedAtMs` is
-// the moment it was written, or null when that moment cannot be trusted: the
-// collector still reuses the periods then and simply forces a full scan, while
-// a seed has nothing to stand on and declines.
-function collectorAnchorTrust(saved, options = {}) {
+// Returns null when the anchor does not describe the current configuration at
+// all. Otherwise `capturedAtMs` is the moment it was written, or null when that
+// moment cannot be trusted: the collector still reuses the periods then and
+// simply forces a full scan, while a seed has nothing to stand on and declines.
+//
+// Note what this deliberately does NOT decide: the anchor's age. A yesterday's
+// anchor still describes today's configuration; only the collector's delta
+// arithmetic needs the anchor to belong to the same day (see
+// collectorAnchorTrust), and a widget that shows the last known totals while
+// its first scan runs does not.
+function anchorConfigTrust(saved, options = {}) {
   const { clients = '', allTimeSince = '', projectsEnabled = true, qoderCnDbPath = '', qoderCnProjectsDir = '', customScanPaths = null, now = new Date() } = options;
-  if (!saved || saved.dateKey !== localTodayKey(now)) return null;
+  if (!saved) return null;
   if (!saved.today || !saved.month || !saved.allTime) return null;
   // A flat provenance ledger cannot prove each period's project source.
   if (Object.keys(saved.catalogProjects || {}).length && !saved.catalogProjects.today) return null;
@@ -2282,6 +2289,19 @@ function collectorAnchorTrust(saved, options = {}) {
   const parsed = Date.parse(saved.fullScanAt || '');
   const capturedAtMs = Number.isFinite(parsed) && parsed <= now.getTime() ? parsed : null;
   return { capturedAtMs };
+}
+
+// The collector's rule on top of the shared configuration trust: only a
+// same-day anchor can serve as the base of a delta. `applyPeriodDelta`
+// subtracts the anchor's today bucket from a fresh `--today` scan, and that
+// subtraction is only meaningful when both describe the same local day — an
+// anchor from another date is not a delta base, so the collector falls back to
+// a full scan. The widget's cold-start seed has no such arithmetic and uses
+// anchorConfigTrust directly.
+function collectorAnchorTrust(saved, options = {}) {
+  const { now = new Date() } = options;
+  if (!saved || saved.dateKey !== localTodayKey(now)) return null;
+  return anchorConfigTrust(saved, options);
 }
 
 // Force a full scan at least this often even when the anchor is otherwise
@@ -3785,6 +3805,7 @@ module.exports = {
   clientWatchCandidates,
   computePeriodWindows,
   collectorAnchorTrust,
+  anchorConfigTrust,
   pricingFingerprint,
   configFingerprint,
   qoderCnDbPathForClients,

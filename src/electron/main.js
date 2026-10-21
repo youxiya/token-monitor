@@ -94,6 +94,7 @@ const { seedSplitClients } = require('../shared/clientIdentitySplits');
 const {
   clientDiagnosticRoots,
   getTokscaleStatus,
+  localTodayKey,
   lookupModelPricing,
   pricingFingerprint,
   normalizeHistoryIntervalMs,
@@ -5132,8 +5133,9 @@ function primeLocalStatsFromAnchor(usageOptions, widgetProducerOwner) {
   // Cold start only. startMode() re-enters here on structural settings changes
   // as well, and there the numbers already collected are newer than any anchor.
   if (lastCollectedDevice) return;
+  const saved = readJson(path.join(sharedDataDir(), 'collector-anchor.json'), null);
   const deviceRecord = deviceRecordFromAnchor(
-    readJson(path.join(sharedDataDir(), 'collector-anchor.json'), null),
+    saved,
     {
       envelope: electronDeviceEnvelope(),
       clients: usageOptions.clients,
@@ -5165,6 +5167,13 @@ function primeLocalStatsFromAnchor(usageOptions, widgetProducerOwner) {
   }
   localDevice = visible;
   localStats = withHistoryPreview(aggregateDevices([visible], 0), [visible]);
+  // A seed from another local day is the previous run's record, not a live
+  // reading: its "today" is a closed day and its totals are as of the capture.
+  // The widget says so, so the number it puts on screen is never mistaken for
+  // one the collector just produced. A same-day seed needs no marker — its
+  // numbers are today's either way.
+  const seedDay = String(saved?.dateKey || '');
+  const staleSeed = Boolean(seedDay) && seedDay !== localTodayKey(new Date());
   // Through the normal publisher, not straight to the renderer: the tray reads
   // what sendPush sets, and in tray mode the window is hidden, so a seed that
   // only reached the renderer would leave the one visible surface on zero.
@@ -5174,7 +5183,7 @@ function primeLocalStatsFromAnchor(usageOptions, widgetProducerOwner) {
   // interval this run's first live scan needs on a snapshot it is republishing.
   sendPush({
     event: 'stats',
-    data: { type: 'stats', reason: 'anchor', stats: localStats, at: deviceRecord.receivedAt }
+    data: { type: 'stats', reason: 'anchor', stats: localStats, at: deviceRecord.receivedAt, staleSeed }
   }, { skipExport: true, deferToRenderer: true, widgetProducerOwner });
 }
 
