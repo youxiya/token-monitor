@@ -37,6 +37,15 @@ set "ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/"
 set "ELECTRON_BUILDER_BINARIES_MIRROR=https://npmmirror.com/mirrors/electron-builder-binaries/"
 set "NODE_USE_SYSTEM_CA=1"
 
+REM Node's fetch does not read the proxy environment on its own, and the
+REM vendored tokscale asset is a GitHub release this host only reaches
+REM through the proxy. ensure-vendored-tokscale.js caps that download at 60
+REM seconds, which the proxy clears in seconds while a direct fetch does not
+REM (measured: 8.6 s through the proxy, over 4 minutes direct). Node 24 can
+REM use the proxy when asked to, so pass it on when one is configured.
+if defined HTTPS_PROXY set "NODE_USE_ENV_PROXY=1"
+if defined HTTP_PROXY set "NODE_USE_ENV_PROXY=1"
+
 echo =============================================================
 echo  Token Monitor - local Windows packaging
 echo  repo: %CD%

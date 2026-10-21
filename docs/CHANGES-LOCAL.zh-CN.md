@@ -246,4 +246,13 @@ rebase 后 `git diff upstream/main main` = **27 文件 / +4854 / −21**，与 r
 
 - `--check` 两条分支都验过：陈旧 → 退出 1 并打印指引；最新 → 退出 0。制造漂移的方式是给 `src/shared/projectKey.js` 临时加一行，验完用 `git checkout --` 精确还原。
 - 脚本整体实跑：前置检查、版本探测（app 0.76.0 / electron 43.7.9）、新的 marker 闸门、以及各失败路径的输出都正确。把 marker 弄陈旧后重跑，在**构建开始前**就中止并给出可执行指引，工作树未被改动。
-- 本机仍停在 `ensure:tokscale`：装的 `@tokscale/cli` 是 4.18.0，而上游已把 `scripts/vendor/tokscale.json` 的 `baseVersion` 提到 4.20.0，override 模式按清单自己的规则拒绝替换。**这与本次改动无关** —— 该步骤是原样保留的，且它与第十节记的 `verifyVendoredTokscaleRelease` 失败同源（`node_modules` 落后于上游）。要真正跑完构建，得先把 `node_modules` 刷到 `@tokscale/cli` 4.20.0。
+- **完整构建跑通**（2026-10-21，v0.76.0）：`dist\Token-Monitor-Setup-0.76.0.exe`（125,834,253 字节）与 `dist\Token-Monitor-0.76.0.exe`（125,533,304 字节），末尾的产物校验（两个文件名断言 + `verify:release-artifact-names`）均通过。解包 `app.asar` 复核功能确实在包里：`usage.js` 19 处 `modelProviders`、`renderer/app.js` 16 处 `modelBreakdownMode`、`i18n.js` 18 个 `views.modelBreakdown.*` 键（6 语言 × 3 键）、`modelBreakdownRows.js` 在包内、`hubBuildRegistry.json` 为 core revision 91。
+
+### 11.4 跑通前的两个坎（都是环境问题，不是脚本问题）
+
+| 坎 | 症状 | 解法 |
+|---|---|---|
+| `node_modules` 落后于上游 | `ensure:tokscale` 拒绝替换：`Installed @tokscale/cli-win32-x64-msvc is 4.18.0, but this vendor override was built against 4.20.0`。`package.json` 声明的是 `tokscale = ^4.20.0`，是本地 `node_modules` 没跟上 | `npm install`（npm 源是 npmmirror，本机 1 秒完成）。这也顺带修好了第十节记的 `verifyVendoredTokscaleRelease` 失败 |
+| GitHub release 下载超时 | fork 版 tokscale 是 GitHub release 里的 29MB 资产，`ensure-vendored-tokscale.js` 给下载设了 **60 秒硬超时**，直连本机 **4 分钟都下不完**（最终 `This operation was aborted`） | 让 Node 走代理：Node 24 支持 `NODE_USE_ENV_PROXY=1` + `HTTPS_PROXY`，**同一个文件 8.6 秒下完**。脚本现在检测到 `HTTPS_PROXY`/`HTTP_PROXY` 就会自动设 `NODE_USE_ENV_PROXY=1` |
+
+> 代理这一条也解释了为什么 `ensure-vendored-tokscale.js` 明明能连通 GitHub（HEAD 请求 200）却下不动文件：连通 ≠ 带宽够，而超时是按整段下载算的。
