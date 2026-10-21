@@ -3,3 +3,8 @@
 # against source-file content — regexes with hardcoded \n — fail. text=auto
 # lets git keep detected binaries (icons, tokscale binaries) untouched.
 * text=auto eol=lf
+
+# cmd.exe parses batch files line by line and its handling of LF-only input
+# is not reliable around goto labels and multi-line blocks, so keep them CRLF
+# even though everything else in the tree is normalised to LF.
+*.bat text eol=crlf
