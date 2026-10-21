@@ -25,7 +25,7 @@ index aaeb9154..217a777b 100644
  | adding or renaming a tracked client | [Tracked-client checklist](docs/providers/README.md#adding-a-tracked-client), including its partition invariants |
 diff --git a/docs/CHANGES-LOCAL.zh-CN.md b/docs/CHANGES-LOCAL.zh-CN.md
 new file mode 100644
-index 00000000..701e261e
+index 00000000..0d5bc4e9
 --- /dev/null
 +++ b/docs/CHANGES-LOCAL.zh-CN.md
 @@ -0,0 +1,249 @@
@@ -242,17 +242,17 @@ index 00000000..701e261e
 +### 10.3 验证状态
 +
 +- `npm run lint`：无告警。
-+- `npm test`：**7564 通过 / 3 失败**。
++- `npm test`：**7565 通过 / 2 失败**（终态；rebase 后的首轮全量是 7564 / 3，多出的那个是下表的偶发项）。
 +- `npm run sync:worker` + `npm run update:hub-build`：已执行，core revision 91。
 +- `docs/CHANGES-LOCAL.patch`：按新基线 `ce26462f` 重建。
 +
-+三个失败经**纯上游基线对照**确认与本地改动无关 —— 把本地改动 stash 后 `git switch --detach upstream/main` 跑同样三个文件，上游同样失败同样两个：
++**纯上游基线对照**：在同一台机器上把 `upstream/main` 完整跑一遍是 **7541 通过 / 14 失败**。上游多出来的那 12 个失败全部是 DSH 会话时间戳与 VS Code / Antigravity 存在性探测类用例 —— 正是第二节与 9.4 那批 source env 隔离修掉的；本地分支把它们全部修好，自己只剩下面这 2 个。这条对照也说明本地分支相对上游是净收益，不是净负担。
 +
 +| 失败用例 | 结论 |
 +|---|---|
-+| `tests/agent/titleSync.test.js` "real process exit after remote admission…" | 上游 Windows 问题，退出码 `3221226505`（`0xC0000409`），9.5 已记录，未变 |
-+| `tests/shared/verifyVendoredTokscaleRelease.test.js` "real vendor manifest derives complete target coverage from @tokscale/cli" | 本机 `node_modules` 的 `@tokscale/cli` 仍是 4.18.0，上游 manifest 已提到 4.20.0 —— 环境落后于上游，非代码问题 |
-+| `tests/shared/usageHost.test.js` "a subprocess on the worker does not outlive a process that exits right after stopping it" | 只在全量并行跑时出现（退出码 `3221225477` = `0xC0000005` 访问违例）；单独跑该文件时本地与上游**都通过**，属并行下的偶发 |
++| `tests/agent/titleSync.test.js` "real process exit after remote admission…" | 上游 Windows 问题，退出码 `3221226505`（`0xC0000409`），9.5 已记录，未变；纯上游基线同样失败 |
++| `tests/shared/verifyVendoredTokscaleRelease.test.js` "real vendor manifest derives complete target coverage from @tokscale/cli" | 本机 `node_modules` 的 `@tokscale/cli` 仍是 4.18.0，上游 manifest 已提到 4.20.0 —— 环境落后于上游，非代码问题；纯上游基线同样失败 |
++| `tests/shared/usageHost.test.js` "a subprocess on the worker does not outlive a process that exits right after stopping it" | 偶发项（退出码 `3221225477` = `0xC0000005` 访问违例）：全量并行跑时出现过 2 次、也通过过 2 次；单独跑该文件时本地与上游**都通过**。属 Windows 子进程退出竞态，与本地改动无关 |
 +
 +> 前两个失败都不需要动代码：前者要改测试「如何退出」才能过，那会改变它验证的东西；后者只需把 `node_modules` 刷到 `@tokscale/cli` 4.20.0。两者都留待单独处理。
 +
